@@ -40,6 +40,6 @@ sha="${GITHUB_SHA:-}"; sha="${sha:0:8}"
 [ -z "$sha" ] && sha="$(git rev-parse --short=8 HEAD 2>/dev/null || echo dev)"
 ZIP="GroveAO-${PLATFORM}-${ARCH}-${sha}.zip"
 mkdir -p dist
-( cd ./bin && zip -r -y "../dist/${ZIP}" "Mystical Grove.app" )
+( cd ./bin && zip -r -y "../dist/${ZIP}" "GroveAO.app" )
 
 echo "Wrote ${ROOT_DIR}/dist/${ZIP}"
