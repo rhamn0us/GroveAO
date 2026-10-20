@@ -1,5 +1,7 @@
 #include "aoapplication.h"
 
+#include "androidstorage.h"
+
 #include "courtroom.h"
 #include "file_functions.h"
 #include "lobby.h"
@@ -24,6 +26,9 @@ int main(int argc, char *argv[])
   // On macOS, we distribute with a built-in base in the .app but this is not writeable
   // so we copy the base folder into the preferred base path (~/Library/Application Support/Attorney Online)
   seed_base_if_missing();
+
+  // Android: ask for file access, pick the base location and create the base folder
+  android_setup_storage();
 
   AOApplication main_app;
   QApplication::setApplicationVersion(AOApplication::get_version_string());
