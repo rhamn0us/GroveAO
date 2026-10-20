@@ -287,10 +287,48 @@ jobs:
           ls "$ANDROID_NDK_ROOT" > /dev/null
           bash ./scripts/build-android.sh arm64-v8a
 
-      - name: Collect APK
+      # androiddeployqt --release produces an UNSIGNED apk, which Android refuses to install.
+      # zipalign + apksigner (build-tools 33.0.2) fix that. Uses the repo secrets below; if they
+      # are missing (forks, PRs) it falls back to a throwaway keystore so the APK still installs
+      # (but such builds can't be updated over a properly signed release).
+      #   ANDROID_KEYSTORE_BASE64   base64 of your .jks/.keystore   (base64 -w0 release.jks)
+      #   ANDROID_KEYSTORE_PASSWORD keystore password
+      #   ANDROID_KEY_ALIAS         key alias
+      #   ANDROID_KEY_PASSWORD      key password (same as keystore password if unsure)
+      - name: Sign APK
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/33.0.2"
+          UNSIGNED="$(find build-android-arm64-v8a -name 'AttorneyOnline.apk' | head -n1)"
+          [ -n "$UNSIGNED" ] || UNSIGNED="$(find build-android-arm64-v8a -name '*-release-unsigned.apk' | head -n1)"
+          [ -n "$UNSIGNED" ] || { echo "No APK found"; find build-android-arm64-v8a -name '*.apk'; exit 1; }
+          echo "Signing $UNSIGNED"
+
+          KS="$RUNNER_TEMP/release.jks"
+          if [ -n "${KS_B64:-}" ]; then
+            echo "$KS_B64" | base64 -d > "$KS"
+          else
+            echo "::warning::Signing secrets not set; using a temporary throwaway keystore."
+            KS_PASS="android"; KEY_PASS="android"; KEY_ALIAS="grove-ci"
+            keytool -genkeypair -keystore "$KS" -storepass "$KS_PASS" -keypass "$KEY_PASS" \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=GroveAO CI, O=GroveAO"
+          fi
+          : "${KEY_PASS:=$KS_PASS}"
+
           mkdir -p dist
-          find build-android-arm64-v8a -name '*.apk' -exec cp {} dist/GroveAO-android-arm64.apk \;
+          "$BT/zipalign" -p -f 4 "$UNSIGNED" "$RUNNER_TEMP/aligned.apk"
+          KS_PASS="$KS_PASS" KEY_PASS="$KEY_PASS" "$BT/apksigner" sign \
+            --ks "$KS" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
+            --out dist/GroveAO-android-arm64.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose dist/GroveAO-android-arm64.apk
+          rm -f "$KS"
           ls -la dist
 
       - name: Upload Artifact
