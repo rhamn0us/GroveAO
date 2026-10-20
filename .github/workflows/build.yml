@@ -264,15 +264,17 @@ jobs:
 
       # Qt 6.5.3 bundles AGP 7.4.1, whose aapt2 cannot read android.jar from API 35+
       # ("RES_TABLE_TYPE_TYPE entry offsets overlap actual entry data"). androiddeployqt
-      # uses the highest platform it finds, so remove everything newer than 33.
-      - name: Remove too-new Android platforms
+      # uses the highest platform it finds (the runner ships names like android-36.1,
+      # android-37.0, android-37.2-beta1), so delete every platform except android-33.
+      - name: Keep only Android platform 33
         run: |
           cd "$ANDROID_HOME/platforms"
-          for d in android-*; do
-            api="${d#android-}"; api="${api%%-*}"
-            if [ "$api" -gt 33 ] 2>/dev/null; then echo "Removing $d"; rm -rf "$d"; fi
+          for d in */; do
+            d="${d%/}"
+            if [ "$d" != "android-33" ]; then echo "Removing $d"; rm -rf "$d"; fi
           done
-          ls
+          echo "Remaining platforms:"; ls
+          test -f android-33/android.jar
 
       - name: Build APK
         env:
