@@ -12,7 +12,7 @@ if [ -f ./build.env ]; then
 fi
 : "${QT_ROOT_DIR:?QT_ROOT_DIR not set, run ./configure.sh first (it writes build.env)}"
 
-APP="./bin/GroveAO.app"
+APP="./bin/Mystical Grove.app"
 if [ ! -d "$APP" ]; then
     echo "Error: ${APP} not found. Build first with the command configure.sh printed."
     exit 1
