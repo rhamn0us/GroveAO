@@ -156,9 +156,9 @@ if(APPLE)
           MACOSX_PACKAGE_LOCATION Resources)
 
   set_target_properties(AttorneyOnline PROPERTIES
-          OUTPUT_NAME "GroveAO"
+          OUTPUT_NAME "Mystical Grove"
           MACOSX_BUNDLE TRUE
-          MACOSX_BUNDLE_BUNDLE_NAME "GroveAO"
+          MACOSX_BUNDLE_BUNDLE_NAME "Mystical Grove"
           MACOSX_BUNDLE_GUI_IDENTIFIER "org.attorneyonline.AttorneyOnline.GroveAO"
           MACOSX_BUNDLE_BUNDLE_VERSION "2"
           MACOSX_BUNDLE_SHORT_VERSION_STRING "2.0"
