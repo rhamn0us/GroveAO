@@ -122,7 +122,7 @@ if(ANDROID)
 endif()
 
 if(ANDROID)
-  # BASS ships per-ABI shared libraries; build-android.sh fetches them into lib/android/<abi>.
+  # BASS and OpenSSL (needed for wss://) ship per-ABI shared libraries; build-android.sh fetches them into lib/android/<abi>.
   set(AO_ANDROID_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/android/${ANDROID_ABI}")
   foreach(_bass bass bassopus)
     add_library(${_bass} SHARED IMPORTED)
@@ -130,7 +130,7 @@ if(ANDROID)
   endforeach()
   set_target_properties(AttorneyOnline PROPERTIES
     QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
-    QT_ANDROID_EXTRA_LIBS "${AO_ANDROID_LIB_DIR}/libbass.so;${AO_ANDROID_LIB_DIR}/libbassopus.so"
+    QT_ANDROID_EXTRA_LIBS "${AO_ANDROID_LIB_DIR}/libbass.so;${AO_ANDROID_LIB_DIR}/libbassopus.so;${AO_ANDROID_LIB_DIR}/libssl_3.so;${AO_ANDROID_LIB_DIR}/libcrypto_3.so"
     QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
     QT_ANDROID_VERSION_CODE 2110)
 endif()
