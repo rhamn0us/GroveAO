@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build a GroveAO debug APK. Requires: Qt 6.5+ for Android (matching ABI) AND a Qt
 # desktop kit of the same version, Android SDK + NDK (see Qt docs for the NDK
-# version your Qt release wants), JDK 17, cmake, ninja, curl, unzip.
+# version your Qt release wants), JDK 17, cmake, ninja, git, curl, unzip.
 #
 #   QT_ANDROID=~/Qt/6.5.3/android_arm64_v8a QT_HOST=~/Qt/6.5.3/gcc_64 \
 #   ANDROID_SDK_ROOT=~/Android/Sdk ANDROID_NDK_ROOT=~/Android/Sdk/ndk/25.1.8937393 \
@@ -26,6 +26,12 @@ if [ ! -f "lib/android/${ABI}/libbassopus.so" ]; then
   curl -fL https://www.un4seen.com/files/bassopus24-android.zip -o tmp/bassopus-android.zip
   unzip -oj tmp/bassopus-android.zip "libs/${ABI}/libbassopus.so" -d "lib/android/${ABI}"
   unzip -oj tmp/bassopus-android.zip "c/bassopus.h" -d lib
+fi
+
+# QtApng (APNG image plugin), built statically into the app by CMake.
+if [ ! -f qtapng/src/plugins/imageformats/apng/apngimageplugin.cpp ]; then
+  rm -rf qtapng
+  git clone --depth 1 https://github.com/jurplel/QtApng.git qtapng
 fi
 
 "${QT_ANDROID}/bin/qt-cmake" -S . -B "build-android-${ABI}" -G Ninja \
