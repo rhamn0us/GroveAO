@@ -41,7 +41,7 @@ mv appimagetool-*-"${APPIMAGE_ARCH}".AppImage appimagetool
 chmod +x appimagetool
 
 mkdir -p AppDir/usr/bin AppDir/usr/lib/plugins/imageformats AppDir/usr/share/applications
-cp bin/AttorneyOnline.bin AppDir/usr/bin
+cp bin/GroveAO.bin AppDir/usr/bin
 cp bin/lib*.so AppDir/usr/lib 2>/dev/null || true
 cp scripts/AttorneyOnline.desktop AppDir/usr/share/applications
 cp data/logo-client.png AppDir/AttorneyOnline.png
