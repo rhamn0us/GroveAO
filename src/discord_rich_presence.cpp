@@ -34,8 +34,8 @@ void Discord::state_lobby()
 {
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
-  presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!";
+  presence.largeImageKey = "mglogo";
+  presence.largeImageText = "These are our Trials and Tribulations... In the lobby!";
   presence.instance = 1;
 
   presence.state = "In The Lobby";
@@ -49,7 +49,7 @@ void Discord::state_server(std::string name, std::string server_id)
 
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
-  presence.largeImageKey = "ao2-logo";
+  presence.largeImageKey = "mglogo";
   presence.largeImageText = "You might say... I'm an Ace Attorney.";
   presence.instance = 1;
 
@@ -75,7 +75,7 @@ void Discord::state_character(std::string name)
 
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
-  presence.largeImageKey = "ao2-logo";
+  presence.largeImageKey = "mglogo";
   presence.largeImageText = "You might say... I'm an Ace Attorney.";
   presence.instance = 1;
   presence.details = this->server_name.c_str();
@@ -94,8 +94,8 @@ void Discord::state_spectate()
 
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
-  presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "You might say... I'm an Ace Attorney.";
+  presence.largeImageKey = "mglogo";
+  presence.largeImageText = "You might say... I'm out for.. Justice For All.";
   presence.instance = 1;
   presence.details = this->server_name.c_str();
   presence.matchSecret = this->server_id.c_str();
