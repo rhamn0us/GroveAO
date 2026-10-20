@@ -106,24 +106,34 @@ static void wait_for_access()
   QEventLoop loop;
   bool left_app = false;
 
-  QObject::connect(qApp, &QGuiApplication::applicationStateChanged, &loop, [&](Qt::ApplicationState state) {
-    if (state != Qt::ApplicationActive)
-    {
-      left_app = true;
-    }
-    else if (left_app)
-    {
-      loop.quit();
-    }
-  });
+  QObject::connect(
+      qApp,
+      &QGuiApplication::applicationStateChanged,
+      &loop,
+      [&](Qt::ApplicationState state)
+      {
+        if (state != Qt::ApplicationActive)
+        {
+          left_app = true;
+        }
+        else if (left_app)
+        {
+          loop.quit();
+        }
+      });
 
   QTimer poll;
-  QObject::connect(&poll, &QTimer::timeout, &loop, [&]() {
-    if (android_storage_access_granted())
-    {
-      loop.quit();
-    }
-  });
+  QObject::connect(
+      &poll,
+      &QTimer::timeout,
+      &loop,
+      [&]()
+      {
+        if (android_storage_access_granted())
+        {
+          loop.quit();
+        }
+      });
   poll.start(500);
 
   QTimer::singleShot(120000, &loop, &QEventLoop::quit);
@@ -139,9 +149,10 @@ void android_setup_storage()
     QMessageBox box;
     box.setWindowTitle(QCoreApplication::translate("android_setup_storage", "File access"));
     box.setIcon(QMessageBox::Question);
-    box.setText(QCoreApplication::translate("android_setup_storage",
-                                            "GroveAO needs access to your phone's files to read your base folder:\n\n%1/GroveAO/base\n\n"
-                                            "Without it, the app can only use its private folder, which file managers cannot open on newer Android versions.")
+    box.setText(QCoreApplication::translate(
+                    "android_setup_storage",
+                    "GroveAO needs access to your phone's files to read your base folder:\n\n%1/GroveAO/base\n\n"
+                    "Without it, the app can only use its private folder, which file managers cannot open on newer Android versions.")
                     .arg(shared));
     QPushButton *grant = box.addButton(QCoreApplication::translate("android_setup_storage", "Grant access"), QMessageBox::AcceptRole);
     box.addButton(QCoreApplication::translate("android_setup_storage", "Not now"), QMessageBox::RejectRole);
@@ -184,17 +195,13 @@ bool android_storage_access_granted()
   return true;
 }
 
-void android_request_storage_access()
-{
-}
+void android_request_storage_access() {}
 
 QString android_storage_root()
 {
   return {};
 }
 
-void android_setup_storage()
-{
-}
+void android_setup_storage() {}
 
 #endif
