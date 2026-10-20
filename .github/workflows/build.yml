@@ -248,18 +248,14 @@ jobs:
           cache-key-prefix: install-qt-action-host
           modules: 'qtimageformats qtwebsockets'
 
+      # Installed with aqt directly: clearer errors than the action for Android kits.
       - name: Install Qt (Android)
-        uses: jurplel/install-qt-action@v4
-        with:
-          aqtversion: '==3.1.*'
-          version: '6.5.3'
-          host: 'linux'
-          target: 'android'
-          arch: 'android_arm64_v8a'
-          dir: ${{ runner.temp }}
-          cache: true
-          cache-key-prefix: install-qt-action-android
-          modules: 'qtimageformats qtwebsockets'
+        run: |
+          python3 -m pip install "aqtinstall==3.1.*"
+          aqt list-qt linux android --arch 6.5.3
+          aqt install-qt linux android 6.5.3 android_arm64_v8a \
+            -m qtimageformats qtwebsockets -O "$RUNNER_TEMP/Qt"
+          ls "$RUNNER_TEMP/Qt/6.5.3"
 
       # Qt 6.5 expects NDK r25b.
       - name: Install NDK
