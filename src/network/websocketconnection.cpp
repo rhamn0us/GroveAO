@@ -3,6 +3,7 @@
 #include "aoapplication.h"
 
 #include <QNetworkRequest>
+#include <QSslSocket>
 #include <QUrl>
 
 WebSocketConnection::WebSocketConnection(AOApplication *ao_app, QObject *parent)
@@ -30,6 +31,12 @@ bool WebSocketConnection::isConnected()
 void WebSocketConnection::connectToServer(const ServerInfo &server)
 {
   disconnectFromServer();
+
+  if (server.protocol == QStringLiteral("wss") && !QSslSocket::supportsSsl())
+  {
+    Q_EMIT errorOccurred(QStringLiteral("TLS is unavailable (OpenSSL failed to load); cannot connect to a wss:// server."));
+    return;
+  }
 
   QUrl url;
   url.setScheme(server.protocol);
