@@ -64,8 +64,8 @@ cp -r bin/base bin-appimage
 cp data/logo-client.png bin-appimage/icon.png
 cp scripts/APPIMAGE_README.md bin-appimage/README.md
 cp scripts/appimage_install.sh bin-appimage/install.sh
-cp ./*-"${APPIMAGE_ARCH}".AppImage "bin-appimage/AttorneyOnline.AppImage"
-chmod +x "bin-appimage/install.sh" "bin-appimage/AttorneyOnline.AppImage"
+cp ./*-"${APPIMAGE_ARCH}".AppImage "bin-appimage/GroveAO.AppImage"
+chmod +x "bin-appimage/install.sh" "bin-appimage/GroveAO.AppImage"
 
 DYN_ZIP="GroveAO-${PLATFORM}dynamic-${ARCH}-${GIT_SHORT_SHA}.zip"
 APP_ZIP="GroveAO-${PLATFORM}appimage-${ARCH}-${GIT_SHORT_SHA}.zip"
