@@ -14,6 +14,11 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 option(AO_BUILD_TESTS "Build test programs" ON)
 option(AO_ENABLE_DISCORD_RPC "Enable Discord Rich Presence" ON)
 
+if(ANDROID)
+  set(AO_ENABLE_DISCORD_RPC OFF)
+  set(AO_BUILD_TESTS OFF)
+endif()
+
 find_package(QT NAMES Qt6)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets Concurrent WebSockets UiTools)
 
@@ -106,6 +111,20 @@ qt_add_executable(AttorneyOnline
 )
 
 set_target_properties(AttorneyOnline PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+
+if(ANDROID)
+  # BASS ships per-ABI shared libraries; build-android.sh fetches them into lib/android/<abi>.
+  set(AO_ANDROID_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/android/${ANDROID_ABI}")
+  foreach(_bass bass bassopus)
+    add_library(${_bass} SHARED IMPORTED)
+    set_target_properties(${_bass} PROPERTIES IMPORTED_LOCATION "${AO_ANDROID_LIB_DIR}/lib${_bass}.so")
+  endforeach()
+  set_target_properties(AttorneyOnline PROPERTIES
+    QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
+    QT_ANDROID_EXTRA_LIBS "${AO_ANDROID_LIB_DIR}/libbass.so;${AO_ANDROID_LIB_DIR}/libbassopus.so"
+    QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
+    QT_ANDROID_VERSION_CODE 2110)
+endif()
 
 if(WIN32)
   set_target_properties(AttorneyOnline PROPERTIES OUTPUT_NAME "GroveAO")
