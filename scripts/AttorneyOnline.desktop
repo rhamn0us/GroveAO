@@ -4,5 +4,5 @@ Name=GroveAO
 Comment=Grove's custom fork of Attorney Online!
 Exec=GroveAO.bin
 Icon=MysticalGrove
-StartupWMClass=MysticalGrove
+StartupWMClass=GroveAO
 Categories=Game;

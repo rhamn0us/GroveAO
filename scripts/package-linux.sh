@@ -26,8 +26,8 @@ cp ./qtapng/plugins/imageformats/libqapng.so "${QT_ROOT_DIR}/plugins/imageformat
     cp ../data/logo-client.png ./icon.png
     cp ../scripts/DYNAMIC_README.md ./README.md
     cp ../scripts/dynamic_install.sh ./install.sh
-    chmod +x install.sh AttorneyOnline.bin
-    patchelf --add-rpath . AttorneyOnline.bin
+    chmod +x install.sh GroveAO.bin
+    patchelf --add-rpath . GroveAO.bin
 )
 
 ### AppImage (self-contained)

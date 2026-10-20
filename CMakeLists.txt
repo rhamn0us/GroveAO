@@ -108,7 +108,7 @@ qt_add_executable(AttorneyOnline
 set_target_properties(AttorneyOnline PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
 
 if(WIN32)
-  set_target_properties(AttorneyOnline PROPERTIES OUTPUT_NAME "Attorney Online")
+  set_target_properties(AttorneyOnline PROPERTIES OUTPUT_NAME "GroveAO")
   if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set_property(TARGET AttorneyOnline PROPERTY WIN32_EXECUTABLE true)
     set(APP_ICON_RESOURCE_WINDOWS "${CMAKE_CURRENT_SOURCE_DIR}/data/logo-client.rc")
@@ -156,10 +156,10 @@ if(APPLE)
           MACOSX_PACKAGE_LOCATION Resources)
 
   set_target_properties(AttorneyOnline PROPERTIES
-          OUTPUT_NAME "Attorney Online"
+          OUTPUT_NAME "GroveAO"
           MACOSX_BUNDLE TRUE
-          MACOSX_BUNDLE_BUNDLE_NAME "Attorney Online"
-          MACOSX_BUNDLE_GUI_IDENTIFIER "org.attorneyonline.AttorneyOnline"
+          MACOSX_BUNDLE_BUNDLE_NAME "GroveAO"
+          MACOSX_BUNDLE_GUI_IDENTIFIER "org.attorneyonline.AttorneyOnline.GroveAO"
           MACOSX_BUNDLE_BUNDLE_VERSION "2"
           MACOSX_BUNDLE_SHORT_VERSION_STRING "2.0"
           MACOSX_BUNDLE_ICON_FILE "logo-client.icns")

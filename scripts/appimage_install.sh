@@ -14,12 +14,12 @@ escaped_exec="$(echo "$(pwd)/$appimage" | sed 's/ /\\s/g')"
 desktop_file="\
 [Desktop Entry]
 Type=Application
-Name=Attorney Online
-Comment=The courtroom drama simulator
+Name=GroveAO
+Comment=Grove's custom fork of Attorney Online!
 Path=$(pwd)
 Exec=\"$escaped_exec\"
 Icon=$(pwd)/icon.png
-StartupWMClass=AttorneyOnline"
+StartupWMClass=GroveAO"
 
 echo "$desktop_file" > ~/.local/share/applications/AttorneyOnline.desktop
 

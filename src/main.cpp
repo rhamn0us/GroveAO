@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
 
   QApplication app(argc, argv);
 
-  QApplication::setDesktopFileName("AttorneyOnline");
+  QApplication::setDesktopFileName("GroveAO");
 
   // On macOS, we distribute with a built-in base in the .app but this is not writeable
   // so we copy the base folder into the preferred base path (~/Library/Application Support/Attorney Online)
@@ -35,7 +35,7 @@ int main(int argc, char *argv[])
 
   AOApplication main_app;
   QApplication::setApplicationVersion(AOApplication::get_version_string());
-  QApplication::setApplicationDisplayName(QObject::tr("Attorney Online %1").arg(QApplication::applicationVersion()));
+  QApplication::setApplicationDisplayName(QObject::tr("GroveAO %1").arg(QApplication::applicationVersion()));
 
   QResource::registerResource(main_app.get_asset("themes/" + Options::getInstance().theme() + ".rcc"));
 
