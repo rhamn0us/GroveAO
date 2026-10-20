@@ -139,8 +139,9 @@ void android_setup_storage()
     QMessageBox box;
     box.setWindowTitle(QCoreApplication::translate("android_setup_storage", "File access"));
     box.setIcon(QMessageBox::Question);
-    box.setText(QCoreApplication::translate("android_setup_storage", "GroveAO needs access to your phone's files to read your base folder:\n\n%1/GroveAO/base\n\n"
-                                                                     "Without it, the app can only use its private folder, which file managers cannot open on newer Android versions.")
+    box.setText(QCoreApplication::translate("android_setup_storage",
+                                            "GroveAO needs access to your phone's files to read your base folder:\n\n%1/GroveAO/base\n\n"
+                                            "Without it, the app can only use its private folder, which file managers cannot open on newer Android versions.")
                     .arg(shared));
     QPushButton *grant = box.addButton(QCoreApplication::translate("android_setup_storage", "Grant access"), QMessageBox::AcceptRole);
     box.addButton(QCoreApplication::translate("android_setup_storage", "Not now"), QMessageBox::RejectRole);
