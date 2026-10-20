@@ -1,4 +1,3 @@
-
 #include "aoapplication.h"
 
 #include "courtroom.h"
@@ -7,8 +6,10 @@
 
 #include <QDebug>
 #include <QDirIterator>
+#include <QEventLoop>
 #include <QImageReader>
 #include <QLibraryInfo>
+#include <QPermission>
 #include <QResource>
 #include <QTranslator>
 
@@ -26,10 +27,15 @@ int main(int argc, char *argv[])
   // so we copy the base folder into the preferred base path (~/Library/Application Support/Attorney Online)
   seed_base_if_missing();
 
-#ifdef ANDROID
-  if (QtAndroid::checkPermission("android.permission.READ_EXTERNAL_STORAGE") == QtAndroid::PermissionResult::Denied)
+#ifdef Q_OS_ANDROID
+  // Qt 6 replaced QtAndroidExtras with the QPermission API. Content is stored in
+  // the app-specific external directory, so only legacy devices need storage access.
+  QStorageAccessPermission storage_permission;
+  if (app.checkPermission(storage_permission) == Qt::PermissionStatus::Undetermined)
   {
-    QtAndroid::requestPermissionsSync({"android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"});
+    QEventLoop loop;
+    app.requestPermission(storage_permission, [&loop](const QPermission &) { loop.quit(); });
+    loop.exec();
   }
 #endif
 
