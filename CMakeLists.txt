@@ -23,6 +23,8 @@ find_package(QT NAMES Qt6)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets Concurrent WebSockets UiTools)
 
 qt_add_executable(AttorneyOnline
+  src/androidstorage.cpp
+  src/androidstorage.h
   src/aoapplication.cpp
   src/aoapplication.h
   src/aoblipplayer.cpp
@@ -115,6 +117,11 @@ if(NOT ANDROID)
 endif()
 
 if(ANDROID)
+  # APNG image format (static QtApng plugin), see cmake/QtApngAndroid.cmake
+  include(cmake/QtApngAndroid.cmake)
+endif()
+
+if(ANDROID)
   # BASS ships per-ABI shared libraries; build-android.sh fetches them into lib/android/<abi>.
   set(AO_ANDROID_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/android/${ANDROID_ABI}")
   foreach(_bass bass bassopus)
@@ -155,6 +162,12 @@ target_link_libraries(AttorneyOnline PRIVATE
   bass
   bassopus
 )
+
+if(ANDROID)
+  # Linking the static plugin target also links its generated plugin-import
+  # object, so no Q_IMPORT_PLUGIN is needed in source.
+  target_link_libraries(AttorneyOnline PRIVATE qapng)
+endif()
 
 if(AO_ENABLE_DISCORD_RPC)
   target_compile_definitions(AttorneyOnline PRIVATE AO_ENABLE_DISCORD_RPC)
