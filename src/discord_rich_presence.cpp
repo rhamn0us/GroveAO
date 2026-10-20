@@ -35,7 +35,7 @@ void Discord::state_lobby()
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
   presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "Objection!";
+  presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!";
   presence.instance = 1;
 
   presence.state = "In Lobby";
