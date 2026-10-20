@@ -15,6 +15,7 @@
 #include <QVersionNumber>
 #include <qnamespace.h>
 
+
 Lobby::Lobby(AOApplication *p_ao_app, NetworkManager *p_net_manager)
     : QMainWindow{}
     , ao_app{p_ao_app}
