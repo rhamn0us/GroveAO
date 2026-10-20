@@ -38,7 +38,7 @@ void Discord::state_lobby()
   presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!";
   presence.instance = 1;
 
-  presence.state = "In Lobby";
+  presence.state = "In The Lobby";
   presence.details = "Idle";
   Discord_UpdatePresence(&presence);
 }
@@ -50,7 +50,7 @@ void Discord::state_server(std::string name, std::string server_id)
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
   presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "Objection!";
+  presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!!";
   presence.instance = 1;
 
   auto timestamp = static_cast<int64_t>(std::time(nullptr));
@@ -76,7 +76,7 @@ void Discord::state_character(std::string name)
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
   presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "Objection!";
+  presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!!";
   presence.instance = 1;
   presence.details = this->server_name.c_str();
   presence.matchSecret = this->server_id.c_str();
@@ -90,12 +90,12 @@ void Discord::state_character(std::string name)
 
 void Discord::state_spectate()
 {
-  qDebug() << "Discord RPC: Setting specator state";
+  qDebug() << "Discord RPC: Setting spectator state";
 
   DiscordRichPresence presence;
   std::memset(&presence, 0, sizeof(presence));
   presence.largeImageKey = "ao2-logo";
-  presence.largeImageText = "Objection!";
+  presence.largeImageText = "It's almost as if I'm some sort of Ace Attorney...!!!";
   presence.instance = 1;
   presence.details = this->server_name.c_str();
   presence.matchSecret = this->server_id.c_str();
