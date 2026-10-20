@@ -44,7 +44,7 @@ mkdir -p AppDir/usr/bin AppDir/usr/lib/plugins/imageformats AppDir/usr/share/app
 cp bin/GroveAO.bin AppDir/usr/bin
 cp bin/lib*.so AppDir/usr/lib 2>/dev/null || true
 cp scripts/AttorneyOnline.desktop AppDir/usr/share/applications
-cp data/logo-client.png AppDir/AttorneyOnline.png
+cp data/logo-client.png AppDir/GroveAO.png
 
 GIT_SHORT_SHA="${GITHUB_SHA:-}"
 GIT_SHORT_SHA="${GIT_SHORT_SHA:0:8}"

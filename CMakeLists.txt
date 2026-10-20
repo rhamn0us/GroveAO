@@ -118,7 +118,7 @@ endif()
 
 # Linux avoids spaces in filenames literally forgor 
 if(UNIX AND NOT APPLE)
-  set_target_properties(AttorneyOnline PROPERTIES OUTPUT_NAME "GroveAO" SUFFIX ".bin")
+  set_target_properties(AttorneyOnline PROPERTIES SUFFIX ".bin")
 endif()
 
 target_include_directories(AttorneyOnline PRIVATE src lib)
