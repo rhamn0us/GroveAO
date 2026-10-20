@@ -8,7 +8,7 @@ cd "${SCRIPT_DIR}"
 mkdir -p ~/.local/share/applications
 
 # desktop files don't like spaces in the Exec field, replace with "\s"
-appimage="AttorneyOnline.AppImage"
+appimage="GroveAO.AppImage"
 escaped_exec="$(echo "$(pwd)/$appimage" | sed 's/ /\\s/g')"
 
 desktop_file="\

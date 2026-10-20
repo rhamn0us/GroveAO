@@ -63,8 +63,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-Windows
-          path: dist/AttorneyOnline-windows-*.zip
+          name: GroveAO-Windows
+          path: dist/GroveAO-windows-*.zip
           archive: false
 
   build-linux:
@@ -109,15 +109,15 @@ jobs:
       - name: Upload Dynamic Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-Linux-Dynamic
-          path: dist/AttorneyOnline-linuxdynamic-*.zip
+          name: GroveAO-Linux-Dynamic
+          path: dist/GroveAO-linuxdynamic-*.zip
           archive: false
 
       - name: Upload AppImage Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-Linux-AppImage
-          path: dist/AttorneyOnline-linuxappimage-*.zip
+          name: GroveAO-Linux-AppImage
+          path: dist/GroveAO-linuxappimage-*.zip
           archive: false
 
   build-linux-arm:
@@ -163,15 +163,15 @@ jobs:
       - name: Upload Dynamic Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-Linux-arm64-Dynamic
-          path: dist/AttorneyOnline-linuxdynamic-*.zip
+          name: GroveAO-Linux-arm64-Dynamic
+          path: dist/GroveAO-linuxdynamic-*.zip
           archive: false
 
       - name: Upload AppImage Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-Linux-arm64-AppImage
-          path: dist/AttorneyOnline-linuxappimage-*.zip
+          name: GroveAO-Linux-arm64-AppImage
+          path: dist/GroveAO-linuxappimage-*.zip
           archive: false
 
   build-macos:
@@ -216,6 +216,6 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AttorneyOnline-macOS
-          path: dist/AttorneyOnline-macos-*.zip
+          name: GroveAO-macOS
+          path: dist/GroveAO-macos-*.zip
           archive: false
