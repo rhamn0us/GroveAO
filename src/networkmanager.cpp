@@ -159,12 +159,10 @@ void NetworkManager::connect_to_server(ServerInfo server)
 
   connect(m_connection, &WebSocketConnection::connectedToServer, ao_app, &AOApplication::server_connected);
   connect(m_connection, &WebSocketConnection::disconnectedFromServer, ao_app, &AOApplication::server_disconnected);
-  connect(m_connection, &WebSocketConnection::errorOccurred, this,
-          [this](QString error)
-          {
-            qCritical() << "Connection error:" << error;
-            Q_EMIT connection_failed(error);
-          });
+  connect(m_connection, &WebSocketConnection::errorOccurred, this, [this](QString error) {
+    qCritical() << "Connection error:" << error;
+    Q_EMIT connection_failed(error);
+  });
   connect(m_connection, &WebSocketConnection::receivedPacket, this, &NetworkManager::handle_server_packet);
 
   m_connection->connectToServer(server);
