@@ -219,3 +219,70 @@ jobs:
           name: GroveAO-macOS
           path: dist/GroveAO-macos-*.zip
           archive: false
+
+  build-android:
+    name: Android arm64
+    needs: formatting-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@master
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Cross-compiling Qt needs a desktop Qt of the same version for moc/rcc/uic.
+      - name: Install Qt (host)
+        uses: jurplel/install-qt-action@v4
+        with:
+          aqtversion: '==3.1.*'
+          version: '6.5.3'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+          dir: ${{ runner.temp }}
+          cache: true
+          cache-key-prefix: install-qt-action-host
+          modules: 'qtimageformats qtwebsockets'
+
+      - name: Install Qt (Android)
+        uses: jurplel/install-qt-action@v4
+        with:
+          aqtversion: '==3.1.*'
+          version: '6.5.3'
+          host: 'linux'
+          target: 'android'
+          arch: 'android_arm64_v8a'
+          dir: ${{ runner.temp }}
+          cache: true
+          cache-key-prefix: install-qt-action-android
+          modules: 'qtimageformats qtwebsockets'
+
+      # Qt 6.5 expects NDK r25b.
+      - name: Install NDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;25.1.8937393" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Build APK
+        env:
+          QT_HOST: ${{ runner.temp }}/Qt/6.5.3/gcc_64
+          QT_ANDROID: ${{ runner.temp }}/Qt/6.5.3/android_arm64_v8a
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/25.1.8937393
+        run: ./scripts/build-android.sh arm64-v8a
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          find build-android-arm64-v8a -name '*.apk' -exec cp {} dist/GroveAO-android-arm64.apk \;
+          ls -la dist
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: GroveAO-Android
+          path: dist/GroveAO-android-arm64.apk
+          archive: false
