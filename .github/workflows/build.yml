@@ -266,9 +266,12 @@ jobs:
         env:
           QT_HOST: ${{ runner.temp }}/Qt/6.5.3/gcc_64
           QT_ANDROID: ${{ runner.temp }}/Qt/6.5.3/android_arm64_v8a
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/25.1.8937393
-        run: bash ./scripts/build-android.sh arm64-v8a
+        run: |
+          # ANDROID_HOME is set by the runner image; ${{ env.* }} can't see it, the shell can.
+          export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/25.1.8937393"
+          ls "$ANDROID_NDK_ROOT" > /dev/null
+          bash ./scripts/build-android.sh arm64-v8a
 
       - name: Collect APK
         run: |
