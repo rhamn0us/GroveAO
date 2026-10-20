@@ -6,7 +6,7 @@
 
 namespace AttorneyOnline
 {
-#if defined(AO_ENABLE_DISCORD_RPC) && !defined(ANDROID)
+#if defined(AO_ENABLE_DISCORD_RPC) && !defined(Q_OS_ANDROID)
 Discord::Discord()
 {
   DiscordEventHandlers handlers;
