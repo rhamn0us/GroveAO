@@ -1,5 +1,7 @@
 #include "file_functions.h"
 
+#include "androidstorage.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -42,13 +44,13 @@ QString get_app_path()
   QString path = QCoreApplication::applicationDirPath();
 
 #ifdef Q_OS_ANDROID
-  // App-specific external storage (/sdcard/Android/data/<pkg>/files): needs no
-  // permissions on modern Android and is reachable by file managers and adb push.
-  const QString external_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-  if (!external_path.isEmpty())
+  // Shared "GroveAO" folder when file access was granted, otherwise the
+  // app-specific external folder. See androidstorage.cpp.
+  const QString android_root = android_storage_root();
+  if (!android_root.isEmpty())
   {
-    QDir().mkpath(external_path);
-    path = external_path;
+    QDir().mkpath(android_root);
+    path = android_root;
   }
 #endif
 
