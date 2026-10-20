@@ -28,6 +28,14 @@ if [ ! -f "lib/android/${ABI}/libbassopus.so" ]; then
   unzip -oj tmp/bassopus-android.zip "c/bassopus.h" -d lib
 fi
 
+# OpenSSL 3 for wss:// (Qt's TLS backend on Android; Qt 6.5+ loads libssl_3.so / libcrypto_3.so).
+# Prebuilt libraries from KDAB/android_openssl (https://github.com/KDAB/android_openssl).
+for _ssl in libssl_3.so libcrypto_3.so; do
+  if [ ! -f "lib/android/${ABI}/${_ssl}" ]; then
+    curl -fL "https://raw.githubusercontent.com/KDAB/android_openssl/master/ssl_3/${ABI}/${_ssl}" -o "lib/android/${ABI}/${_ssl}"
+  fi
+done
+
 # QtApng (APNG image plugin), built statically into the app by CMake.
 if [ ! -f qtapng/src/plugins/imageformats/apng/apngimageplugin.cpp ]; then
   rm -rf qtapng
