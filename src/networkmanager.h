@@ -43,6 +43,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
   void server_connected(bool state);
+  void connection_failed(QString error);
 
 private Q_SLOTS:
   void ms_request_finished(QNetworkReply *reply);
