@@ -262,6 +262,18 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;25.1.8937393" "platforms;android-33" "build-tools;33.0.2"
 
+      # Qt 6.5.3 bundles AGP 7.4.1, whose aapt2 cannot read android.jar from API 35+
+      # ("RES_TABLE_TYPE_TYPE entry offsets overlap actual entry data"). androiddeployqt
+      # uses the highest platform it finds, so remove everything newer than 33.
+      - name: Remove too-new Android platforms
+        run: |
+          cd "$ANDROID_HOME/platforms"
+          for d in android-*; do
+            api="${d#android-}"; api="${api%%-*}"
+            if [ "$api" -gt 33 ] 2>/dev/null; then echo "Removing $d"; rm -rf "$d"; fi
+          done
+          ls
+
       - name: Build APK
         env:
           QT_HOST: ${{ runner.temp }}/Qt/6.5.3/gcc_64
