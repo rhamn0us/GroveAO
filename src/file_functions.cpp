@@ -42,18 +42,13 @@ QString get_app_path()
   QString path = QCoreApplication::applicationDirPath();
 
 #ifdef Q_OS_ANDROID
-  QString storage_path = qgetenv("SECONDARY_STORAGE");
-  if (dir_exists(storage_path))
+  // App-specific external storage (/sdcard/Android/data/<pkg>/files): needs no
+  // permissions on modern Android and is reachable by file managers and adb push.
+  const QString external_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  if (!external_path.isEmpty())
   {
-    path = storage_path;
-  }
-  else
-  {
-    QString external_path = qgetenv("EXTERNAL_STORAGE");
-    if (dir_exists(external_path))
-    {
-      path = external_path;
-    }
+    QDir().mkpath(external_path);
+    path = external_path;
   }
 #endif
 
