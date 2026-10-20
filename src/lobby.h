@@ -12,10 +12,6 @@
 #include "networkmanager.h"
 #include <QMainWindow>
 
-#ifdef ANDROID
-#include <QtAndroidExtras/QtAndroid>
-#endif
-
 class AOApplication;
 
 class Lobby : public QMainWindow
