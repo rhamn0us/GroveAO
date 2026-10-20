@@ -12,7 +12,7 @@ if [ -f ./build.env ]; then
 fi
 : "${QT_ROOT_DIR:?QT_ROOT_DIR not set, run ./configure.sh first (it writes build.env)}"
 
-APP="./bin/Attorney Online.app"
+APP="./bin/GroveAO.app"
 if [ ! -d "$APP" ]; then
     echo "Error: ${APP} not found. Build first with the command configure.sh printed."
     exit 1
@@ -38,8 +38,8 @@ codesign --force --deep --sign - "$APP"
 
 sha="${GITHUB_SHA:-}"; sha="${sha:0:8}"
 [ -z "$sha" ] && sha="$(git rev-parse --short=8 HEAD 2>/dev/null || echo dev)"
-ZIP="AttorneyOnline-${PLATFORM}-${ARCH}-${sha}.zip"
+ZIP="GroveAO-${PLATFORM}-${ARCH}-${sha}.zip"
 mkdir -p dist
-( cd ./bin && zip -r -y "../dist/${ZIP}" "Attorney Online.app" )
+( cd ./bin && zip -r -y "../dist/${ZIP}" "Mystical Grove.app" )
 
 echo "Wrote ${ROOT_DIR}/dist/${ZIP}"

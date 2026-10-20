@@ -12,8 +12,8 @@ if [ -f ./build.env ]; then
 fi
 : "${QT_ROOT_DIR:?QT_ROOT_DIR not set, run ./configure.sh first (it writes build.env)}"
 
-if [ ! -f "./bin/AttorneyOnline.bin" ]; then
-    echo "Error: ./bin/AttorneyOnline.bin not found. Build first with the command configure.sh printed."
+if [ ! -f "./bin/GroveAO.bin" ]; then
+    echo "Error: ./bin/GroveAO.bin not found. Build first with the command configure.sh printed."
     exit 1
 fi
 
@@ -67,8 +67,8 @@ cp scripts/appimage_install.sh bin-appimage/install.sh
 cp ./*-"${APPIMAGE_ARCH}".AppImage "bin-appimage/AttorneyOnline.AppImage"
 chmod +x "bin-appimage/install.sh" "bin-appimage/AttorneyOnline.AppImage"
 
-DYN_ZIP="AttorneyOnline-${PLATFORM}dynamic-${ARCH}-${GIT_SHORT_SHA}.zip"
-APP_ZIP="AttorneyOnline-${PLATFORM}appimage-${ARCH}-${GIT_SHORT_SHA}.zip"
+DYN_ZIP="GroveAO-${PLATFORM}dynamic-${ARCH}-${GIT_SHORT_SHA}.zip"
+APP_ZIP="GroveAO-${PLATFORM}appimage-${ARCH}-${GIT_SHORT_SHA}.zip"
 mkdir -p dist
 ( cd bin && zip -r -y "../dist/${DYN_ZIP}" . -x '.gitignore' )
 ( cd bin-appimage && zip -r -y "../dist/${APP_ZIP}" . )

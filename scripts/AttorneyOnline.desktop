@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Attorney Online
-Comment=The courtroom drama simulator
+Name=GroveAO
+Comment=Grove's custom fork of Attorney Online!
 Exec=AttorneyOnline.bin
 Icon=AttorneyOnline
 StartupWMClass=AttorneyOnline
