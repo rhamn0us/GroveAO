@@ -174,12 +174,10 @@ void Lobby::loadUI()
   connect(ui_connect_button, &QPushButton::released, net_manager, &NetworkManager::join_to_server);
   connect(ui_connect_button, &QPushButton::released, this, [=, this] { ui_server_player_count_lbl->setText(tr("Joining Server...")); });
   connect(net_manager, &NetworkManager::server_connected, ui_connect_button, &QPushButton::setEnabled);
-  connect(net_manager, &NetworkManager::connection_failed, this,
-          [this](const QString &)
-          {
-            ui_server_player_count_lbl->setText(tr("Offline"));
-            ui_connect_button->setEnabled(false);
-          });
+  connect(net_manager, &NetworkManager::connection_failed, this, [this](const QString &) {
+    ui_server_player_count_lbl->setText(tr("Offline"));
+    ui_connect_button->setEnabled(false);
+  });
 
   FROM_UI(QTextBrowser, motd_text);
   FROM_UI(QTextBrowser, game_changelog_text);
