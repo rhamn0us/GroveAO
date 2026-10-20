@@ -6,10 +6,8 @@
 
 #include <QDebug>
 #include <QDirIterator>
-#include <QEventLoop>
 #include <QImageReader>
 #include <QLibraryInfo>
-#include <QPermission>
 #include <QResource>
 #include <QTranslator>
 
@@ -26,18 +24,6 @@ int main(int argc, char *argv[])
   // On macOS, we distribute with a built-in base in the .app but this is not writeable
   // so we copy the base folder into the preferred base path (~/Library/Application Support/Attorney Online)
   seed_base_if_missing();
-
-#ifdef Q_OS_ANDROID
-  // Qt 6 replaced QtAndroidExtras with the QPermission API. Content is stored in
-  // the app-specific external directory, so only legacy devices need storage access.
-  QStorageAccessPermission storage_permission;
-  if (app.checkPermission(storage_permission) == Qt::PermissionStatus::Undetermined)
-  {
-    QEventLoop loop;
-    app.requestPermission(storage_permission, [&loop](const QPermission &) { loop.quit(); });
-    loop.exec();
-  }
-#endif
 
   AOApplication main_app;
   QApplication::setApplicationVersion(AOApplication::get_version_string());
