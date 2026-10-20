@@ -110,7 +110,9 @@ qt_add_executable(AttorneyOnline
   src/network/serverinfo.h src/network/serverinfo.cpp
 )
 
-set_target_properties(AttorneyOnline PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+if(NOT ANDROID)
+  set_target_properties(AttorneyOnline PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+endif()
 
 if(ANDROID)
   # BASS ships per-ABI shared libraries; build-android.sh fetches them into lib/android/<abi>.
@@ -136,7 +138,7 @@ if(WIN32)
 endif()
 
 # Linux avoids spaces in filenames literally forgor 
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
   set_target_properties(AttorneyOnline PROPERTIES OUTPUT_NAME "GroveAO" SUFFIX ".bin")
 endif()
 
@@ -164,9 +166,11 @@ if(AO_BUILD_TESTS)
   add_subdirectory(test)
 endif()
 
-set_target_properties(AttorneyOnline PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_LIST_DIR}/bin>
-        RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_LIST_DIR}/bin>)
+if(NOT ANDROID)
+  set_target_properties(AttorneyOnline PROPERTIES
+          LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_LIST_DIR}/bin>
+          RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_LIST_DIR}/bin>)
+endif()
 
 if(APPLE)
   set(MACOSX_BUNDLE_ICON "${CMAKE_CURRENT_LIST_DIR}/data/logo-client.icns")
