@@ -17,6 +17,10 @@ void android_request_storage_access();
 // Root folder that contains "base" and "logs". Empty off Android.
 QString android_storage_root();
 
+// Private, always-local folder for settings files (config.ini etc). Shared storage
+// is a FUSE mount where QSettings' lock files are unreliable. Empty off Android.
+QString android_config_dir();
+
 // Call once from main() right after QApplication is constructed, before anything
 // touches Options or get_base_path(). Asks for access if needed, picks the root,
 // and creates the base folder with its usual sub-folders.
