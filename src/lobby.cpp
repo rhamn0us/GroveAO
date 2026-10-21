@@ -464,7 +464,9 @@ void Lobby::onReloadThemeRequested()
 void Lobby::onSettingsRequested()
 {
   AOOptionsDialog options(ao_app);
-  connect(&options, &AOOptionsDialog::reloadThemeRequest, this, &Lobby::onReloadThemeRequested);
+  // Queued: reloading deletes the widgets, including the settings button whose click is
+  // still being handled right now.
+  connect(&options, &AOOptionsDialog::reloadThemeRequest, this, &Lobby::onReloadThemeRequested, Qt::QueuedConnection);
   options.exec();
 }
 
