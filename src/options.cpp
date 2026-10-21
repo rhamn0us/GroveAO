@@ -1,4 +1,6 @@
 #include "options.h"
+
+#include "androidstorage.h"
 #include "file_functions.h"
 
 #include <QCoreApplication>
@@ -39,9 +41,27 @@ void Options::migrateCallwords()
   setCallwords(l_callwords);
 }
 
+// Where a settings file lives. On Android these are written often, so they are kept in
+// the app's private folder (reliable file locking) instead of shared storage, and an
+// existing copy in the base folder is moved over once.
+static QString settings_file_path(const QString &name)
+{
+#ifdef Q_OS_ANDROID
+  const QString private_path = android_config_dir() + "/" + name;
+  const QString legacy_path = get_base_path() + name;
+  if (!QFile::exists(private_path) && QFile::exists(legacy_path))
+  {
+    QFile::copy(legacy_path, private_path);
+  }
+  return private_path;
+#else
+  return get_base_path() + name;
+#endif
+}
+
 Options::Options()
-    : config(get_base_path() + "config.ini", QSettings::IniFormat, nullptr)
-    , favorite(get_base_path() + "favorite_servers.ini", QSettings::IniFormat, nullptr)
+    : config(settings_file_path("config.ini"), QSettings::IniFormat, nullptr)
+    , favorite(settings_file_path("favorite_servers.ini"), QSettings::IniFormat, nullptr)
 {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
   config.setIniCodec("UTF-8");
@@ -92,7 +112,7 @@ void Options::setTheme(QString value)
   config.setValue("theme", value);
 }
 
-double Options::themeScalingFactor() const
+double Options::userThemeScalingFactor() const
 {
   double value = config.value("theme_scaling_factor", "1").toDouble();
   if (value < 0.1)
@@ -100,6 +120,16 @@ double Options::themeScalingFactor() const
     value = 0.1;
   }
   return value;
+}
+
+double Options::themeScalingFactor() const
+{
+  return userThemeScalingFactor() * m_auto_fit_scale;
+}
+
+void Options::setAutoFitScale(double value)
+{
+  m_auto_fit_scale = value > 0.05 ? value : 1.0;
 }
 
 void Options::setThemeScalingFactor(double value)
