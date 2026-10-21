@@ -199,7 +199,7 @@ void AOApplication::call_settings_menu()
 
   if (is_courtroom_constructed())
   {
-    connect(l_dialog, &AOOptionsDialog::reloadThemeRequest, w_courtroom, &Courtroom::on_reload_theme_clicked);
+    connect(l_dialog, &AOOptionsDialog::reloadThemeRequest, w_courtroom, &Courtroom::on_reload_theme_clicked, Qt::QueuedConnection);
   }
 
   if (is_lobby_constructed())
@@ -245,6 +245,16 @@ void AOApplication::server_connected()
 void AOApplication::initBASS()
 {
   BASS_SetConfig(BASS_CONFIG_DEV_DEFAULT, 1);
+#ifdef Q_OS_ANDROID
+  // Mobile connections are slower and flakier than a desktop's: give streams more time
+  // and a bigger buffer, and identify as a normal client because some hosts refuse or
+  // cut off BASS's default user agent.
+  BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 15000);
+  BASS_SetConfig(BASS_CONFIG_NET_READTIMEOUT, 30000);
+  BASS_SetConfig(BASS_CONFIG_NET_BUFFER, 30000);
+  BASS_SetConfig(BASS_CONFIG_NET_PREBUF, 50);
+  BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, "Mozilla/5.0 (Linux; Android) GroveAO");
+#endif
   BASS_Free();
   // Change the default audio output device to be the one the user has given
   // in his config.ini file for now.
