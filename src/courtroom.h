@@ -99,6 +99,19 @@ public:
 
   void set_courtroom_size();
 
+  /**
+   * @brief Android: picks the automatic scale that makes the courtroom and character
+   * select fit the screen. No-op elsewhere.
+   */
+  void update_fit_scale();
+
+  /**
+   * @brief Android: re-fits and re-lays out the courtroom after a rotation.
+   */
+  void on_screen_geometry_changed();
+
+  void on_music_list_tapped(QTreeWidgetItem *p_item, int column);
+
   // sets position of widgets based on theme ini files
   void set_widgets();
 
