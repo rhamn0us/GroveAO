@@ -5,9 +5,86 @@
 
 #include <bass.h>
 
+#include <QDateTime>
 #include <QDebug>
+#include <QDir>
+#include <QEventLoop>
+#include <QFile>
 #include <QFuture>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QWidget>
+
+#ifdef Q_OS_ANDROID
+namespace
+{
+// Fallback for when BASS cannot open a stream URL itself: download the whole file with
+// Qt's network stack (which has working TLS) and play it from disk.
+QString download_stream_to_cache(const QUrl &url)
+{
+  constexpr qint64 max_size = 100 * 1024 * 1024;
+
+  const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/streams";
+  QDir().mkpath(dir);
+  const QStringList old_files = QDir(dir).entryList(QDir::Files);
+  for (const QString &old_file : old_files)
+  {
+    QFile::remove(dir + "/" + old_file);
+  }
+
+  QNetworkAccessManager manager;
+  QNetworkRequest request(url);
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Linux; Android) GroveAO");
+  QNetworkReply *reply = manager.get(request);
+
+  QFile out(dir + "/stream_" + QString::number(QDateTime::currentMSecsSinceEpoch()));
+  if (!out.open(QIODevice::WriteOnly))
+  {
+    reply->deleteLater();
+    return {};
+  }
+
+  QEventLoop loop;
+  QTimer timeout;
+  timeout.setSingleShot(true);
+  QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+  QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+  QObject::connect(reply, &QNetworkReply::readyRead, &loop, [&] {
+    out.write(reply->readAll());
+    timeout.start(20000); // give up once no data arrives for 20 seconds
+    if (out.size() > max_size)
+    {
+      reply->abort();
+    }
+  });
+  timeout.start(20000);
+  loop.exec();
+
+  const bool finished = reply->isFinished() && reply->error() == QNetworkReply::NoError;
+  if (finished)
+  {
+    out.write(reply->readAll());
+  }
+  else
+  {
+    qWarning() << "Stream download failed:" << reply->errorString();
+  }
+  reply->abort();
+  reply->deleteLater();
+  out.close();
+
+  if (!finished)
+  {
+    out.remove();
+    return {};
+  }
+  return out.fileName();
+}
+} // namespace
+#endif
 
 AOMusicPlayer::AOMusicPlayer(AOApplication *ao_app)
     : ao_app(ao_app)
@@ -47,6 +124,21 @@ QString AOMusicPlayer::playStream(QString song, int streamId, bool loopEnabled, 
     }
     QUrl l_url = QUrl(f_path);
     newstream = BASS_StreamCreateURL(l_url.toEncoded().toStdString().c_str(), 0, flags, nullptr, 0);
+#ifdef Q_OS_ANDROID
+    if (newstream == 0)
+    {
+      qWarning() << "BASS could not open stream" << l_url << "- error" << BASS_ErrorGetCode() << "- trying a download instead";
+      const QString cached = download_stream_to_cache(l_url);
+      if (!cached.isEmpty())
+      {
+        newstream = BASS_StreamCreateFile(FALSE, cached.utf16(), 0, 0, flags | BASS_STREAM_PRESCAN | BASS_UNICODE);
+      }
+    }
+#endif
+    if (newstream == 0)
+    {
+      qWarning() << "Unable to play stream" << l_url << "- BASS error" << BASS_ErrorGetCode();
+    }
   }
   else
   {
