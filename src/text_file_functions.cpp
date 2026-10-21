@@ -209,8 +209,8 @@ QPoint AOApplication::get_button_spacing(QString p_identifier, QString p_file)
   {
     return return_value;
   }
-  return_value.setX(sub_line_elements.at(0).toInt() * Options::getInstance().themeScalingFactor());
-  return_value.setY(sub_line_elements.at(1).toInt() * Options::getInstance().themeScalingFactor());
+  return_value.setX(qRound(sub_line_elements.at(0).toInt() * Options::getInstance().themeScalingFactor()));
+  return_value.setY(qRound(sub_line_elements.at(1).toInt() * Options::getInstance().themeScalingFactor()));
 
   return return_value;
 }
@@ -231,12 +231,12 @@ pos_size_type AOApplication::get_element_dimensions(QString p_identifier, QStrin
     return return_value;
   }
 
-  int scale = Options::getInstance().themeScalingFactor();
+  const double scale = Options::getInstance().themeScalingFactor();
 
-  return_value.x = sub_line_elements.at(0).toInt() * scale;
-  return_value.y = sub_line_elements.at(1).toInt() * scale;
-  return_value.width = sub_line_elements.at(2).toInt() * scale;
-  return_value.height = sub_line_elements.at(3).toInt() * scale;
+  return_value.x = qRound(sub_line_elements.at(0).toInt() * scale);
+  return_value.y = qRound(sub_line_elements.at(1).toInt() * scale);
+  return_value.width = qRound(sub_line_elements.at(2).toInt() * scale);
+  return_value.height = qRound(sub_line_elements.at(3).toInt() * scale);
 
   return return_value;
 }
