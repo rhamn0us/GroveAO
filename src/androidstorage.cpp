@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QEventLoop>
+#include <QFile>
 #include <QGuiApplication>
 #include <QJniEnvironment>
 #include <QJniObject>
@@ -40,7 +41,29 @@ QString app_specific_dir()
 {
   return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
+
+// QSettings takes a "<file>.lock" for every write. If the app was killed mid-write
+// (Android does that a lot) the lock stays behind and the next write waits on it
+// forever. Nothing of ours can be holding a lock at startup, so drop them all.
+void remove_stale_locks(const QString &dir)
+{
+  const QStringList stale = QDir(dir).entryList({"*.lock", "*.rmlock"}, QDir::Files);
+  for (const QString &name : stale)
+  {
+    if (QFile::remove(dir + "/" + name))
+    {
+      qInfo() << "Removed stale lock file" << (dir + "/" + name);
+    }
+  }
+}
 } // namespace
+
+QString android_config_dir()
+{
+  const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+  QDir().mkpath(dir);
+  return dir;
+}
 
 bool android_storage_access_granted()
 {
@@ -175,6 +198,10 @@ void android_setup_storage()
     }
   }
   qInfo() << "Base folder:" << base;
+
+  remove_stale_locks(base);
+  remove_stale_locks(base + "cases");
+  remove_stale_locks(android_config_dir());
 }
 
 #else // !Q_OS_ANDROID
@@ -188,6 +215,11 @@ void android_request_storage_access()
 {}
 
 QString android_storage_root()
+{
+  return {};
+}
+
+QString android_config_dir()
 {
   return {};
 }
