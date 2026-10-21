@@ -30,7 +30,21 @@ public:
   QString theme() const;
   void setTheme(QString value);
 
+  /**
+   * @brief The scaling factor the user chose in the settings.
+   */
+  double userThemeScalingFactor() const;
+
+  /**
+   * @brief The scaling factor to use when sizing theme elements: the user's factor
+   * multiplied by the automatic fit-to-screen factor (Android only, 1.0 elsewhere).
+   */
   double themeScalingFactor() const;
+
+  /**
+   * @brief Sets the automatic fit-to-screen factor. Not persisted.
+   */
+  void setAutoFitScale(double value);
   void setThemeScalingFactor(double value);
 
   // Returns the blip rate from config.ini (once per X symbols)
@@ -291,6 +305,8 @@ private:
   /**
    * @brief QSettings object for config.ini
    */
+  double m_auto_fit_scale = 1.0;
+
   QSettings config;
 
   /**
