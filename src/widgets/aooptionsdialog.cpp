@@ -242,7 +242,7 @@ void AOOptionsDialog::updateValues()
 
 void AOOptionsDialog::savePressed()
 {
-  bool l_reload_theme_required = (ui_theme_combobox->currentText() != Options::getInstance().theme()) || (ui_theme_scaling_factor_sb->value() != Options::getInstance().themeScalingFactor());
+  bool l_reload_theme_required = (ui_theme_combobox->currentText() != Options::getInstance().theme()) || (ui_theme_scaling_factor_sb->value() != Options::getInstance().userThemeScalingFactor());
   for (const OptionEntry &entry : std::as_const(optionEntries))
   {
     entry.save();
@@ -388,7 +388,7 @@ void AOOptionsDialog::setupUI()
   FROM_UI(QCheckBox, offsetpreview_cb);
   FROM_UI(QLineEdit, playerlist_format_edit);
 
-  registerOption<QDoubleSpinBox, double>("theme_scaling_factor_sb", &Options::themeScalingFactor, &Options::setThemeScalingFactor);
+  registerOption<QDoubleSpinBox, double>("theme_scaling_factor_sb", &Options::userThemeScalingFactor, &Options::setThemeScalingFactor);
   registerOption<QCheckBox, bool>("animated_theme_cb", &Options::animatedThemeEnabled, &Options::setAnimatedThemeEnabled);
   registerOption<QSpinBox, int>("stay_time_spinbox", &Options::textStayTime, &Options::setTextStayTime);
   registerOption<QCheckBox, bool>("instant_objection_cb", &Options::objectionSkipQueueEnabled, &Options::setObjectionSkipQueueEnabled);
