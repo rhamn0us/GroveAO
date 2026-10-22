@@ -165,6 +165,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   ui_music_list->header()->setStretchLastSection(false);
   ui_music_list->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
   ui_music_list->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_music_list);
   ui_music_list->setUniformRowHeights(true);
   ui_music_list->setObjectName("ui_music_list");
 
@@ -228,6 +229,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_pos_dropdown = new QComboBox(this);
   ui_pos_dropdown->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_pos_dropdown);
   ui_pos_dropdown->view()->setTextElideMode(Qt::ElideLeft);
   ui_pos_dropdown->setObjectName("ui_pos_dropdown");
 
@@ -236,6 +238,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_iniswap_dropdown = new QComboBox(this);
   ui_iniswap_dropdown->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_iniswap_dropdown);
   ui_iniswap_dropdown->view()->setTextElideMode(Qt::ElideLeft);
   ui_iniswap_dropdown->setObjectName("ui_iniswap_dropdown");
 
@@ -244,6 +247,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_sfx_dropdown = new QComboBox(this);
   ui_sfx_dropdown->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_sfx_dropdown);
   ui_sfx_dropdown->view()->setTextElideMode(Qt::ElideLeft);
   ui_sfx_dropdown->setObjectName("ui_sfx_dropdown");
 
@@ -253,6 +257,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   ui_effects_dropdown = new QComboBox(this);
   ui_effects_dropdown->view()->setTextElideMode(Qt::ElideLeft);
   ui_effects_dropdown->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_effects_dropdown);
   ui_effects_dropdown->setObjectName("ui_effects_dropdown");
 
   ui_defense_bar = new AOImage(ao_app, this);
@@ -340,6 +345,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_custom_objection = new AOButton(ao_app, this);
   ui_custom_objection->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_custom_objection);
   ui_custom_objection->setObjectName("ui_custom_objection");
 
   custom_obj_menu = new QMenu(this);
@@ -368,6 +374,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_text_color = new QComboBox(this);
   ui_text_color->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_text_color);
   ui_text_color->setObjectName("ui_text_color");
 
   ui_music_slider = new QSlider(Qt::Horizontal, this);
@@ -411,6 +418,7 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
 
   ui_evidence_button = new AOButton(ao_app, this);
   ui_evidence_button->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_evidence_button);
   ui_evidence_button->setObjectName("ui_evidence_button");
 
   initialize_emotes();
@@ -545,10 +553,6 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   connect(ui_player_list, &PlayerListWidget::notify, this, [this](const QString &message) { append_server_chatmessage("CLIENT", message, "1"); });
 
 #ifdef Q_OS_ANDROID
-  // Long-press the custom shout button to pick one of the character's custom shouts
-  // (the equivalent of a right-click on desktop).
-  new LongPressFilter(ui_custom_objection, [this](const QPoint &pos) { show_custom_objection_menu(pos); });
-
   for (QTreeWidget *list : {ui_music_list, ui_area_list})
   {
     list->setItemDelegate(new TouchRowDelegate(40, list));
