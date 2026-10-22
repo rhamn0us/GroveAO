@@ -545,6 +545,10 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   connect(ui_player_list, &PlayerListWidget::notify, this, [this](const QString &message) { append_server_chatmessage("CLIENT", message, "1"); });
 
 #ifdef Q_OS_ANDROID
+  // Long-press the custom shout button to pick one of the character's custom shouts
+  // (the equivalent of a right-click on desktop).
+  new LongPressFilter(ui_custom_objection, [this](const QPoint &pos) { show_custom_objection_menu(pos); });
+
   for (QTreeWidget *list : {ui_music_list, ui_area_list})
   {
     list->setItemDelegate(new TouchRowDelegate(40, list));
