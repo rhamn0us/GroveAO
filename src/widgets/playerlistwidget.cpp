@@ -1,5 +1,7 @@
 #include "playerlistwidget.h"
 
+#include "touch_utils.h"
+
 #include "aoapplication.h"
 #include "moderation_functions.h"
 #include "widgets/moderator_dialog.h"
@@ -12,6 +14,7 @@ PlayerListWidget::PlayerListWidget(AOApplication *ao_app, QWidget *parent)
     , ao_app(ao_app)
 {
   setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(this);
 
   connect(this, &PlayerListWidget::customContextMenuRequested, this, &PlayerListWidget::onCustomContextMenuRequested);
 }
