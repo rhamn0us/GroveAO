@@ -1,5 +1,7 @@
 #include "courtroom.h"
+
 #include "lobby.h"
+#include "touch_utils.h"
 
 #include "debug_functions.h"
 #include "file_functions.h"
@@ -298,6 +300,7 @@ void Courtroom::character_loading_finished()
 
     AOCharButton *char_button = new AOCharButton(ao_app, ui_char_buttons);
     char_button->setContextMenuPolicy(Qt::CustomContextMenu);
+    enable_long_press_context_menu(char_button);
     char_button->hide();
     char_button->setCharacter(character.name);
     char_button->setTaken(character.taken);
