@@ -1,5 +1,7 @@
 #include "courtroom.h"
 
+#include "touch_utils.h"
+
 #include "aoemotebutton.h"
 #include "options.h"
 
@@ -15,6 +17,7 @@ void Courtroom::initialize_emotes()
 
   ui_emote_dropdown = new QComboBox(this);
   ui_emote_dropdown->setContextMenuPolicy(Qt::CustomContextMenu);
+  enable_long_press_context_menu(ui_emote_dropdown);
   ui_emote_dropdown->setObjectName("ui_emote_dropdown");
 
   emote_menu = new QMenu(this);
@@ -85,6 +88,7 @@ void Courtroom::refresh_emotes()
     ui_emote_list.append(f_emote);
 
     f_emote->setContextMenuPolicy(Qt::CustomContextMenu);
+    enable_long_press_context_menu(f_emote);
     connect(f_emote, &AOEmoteButton::emoteClicked, this, &Courtroom::on_emote_clicked);
     connect(f_emote, &AOEmoteButton::customContextMenuRequested, this, &Courtroom::show_emote_menu);
 
