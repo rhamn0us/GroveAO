@@ -26,6 +26,8 @@ qt_add_executable(AttorneyOnline
   src/androidstorage.cpp
   src/androidstorage.h
   src/aoapplication.cpp
+  src/cdn_characters.cpp
+  src/cdn_characters.h
   src/aoapplication.h
   src/aoblipplayer.cpp
   src/aoblipplayer.h
