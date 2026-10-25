@@ -1,4 +1,5 @@
 #include "courtroom.h"
+#include "cdn_characters.h"
 
 #include "touch_utils.h"
 
@@ -5137,6 +5138,48 @@ void Courtroom::on_ooc_return_pressed()
     }
   }
 
+  if (ooc_message == "/cdn" || ooc_message.startsWith("/cdn "))
+  {
+    const QStringList args = ooc_message.split(" ", Qt::SkipEmptyParts);
+    const QString sub = args.value(1).toLower();
+    CdnCharacters &cdn = CdnCharacters::instance();
+    if (sub == "add" && args.size() >= 3)
+    {
+      QString name;
+      QString error;
+      if (cdn.add(args.at(2), &name, &error))
+      {
+        append_server_chatmessage("CLIENT",
+                                  tr("Added CDN character \"%1\". Type its name in the iniswap box to use it; files are fetched as needed.").arg(name),
+                                  "1");
+      }
+      else
+      {
+        append_server_chatmessage("CLIENT", error, "1");
+      }
+    }
+    else if (sub == "remove" && args.size() >= 3)
+    {
+      cdn.remove(args.at(2));
+      append_server_chatmessage("CLIENT", tr("Removed CDN character \"%1\" and its cached files.").arg(args.at(2)), "1");
+    }
+    else if (sub == "list")
+    {
+      QStringList lines;
+      for (const CdnCharacters::Entry &e : cdn.entries())
+      {
+        lines << QString("%1 -> %2").arg(e.name, e.base.toString());
+      }
+      append_server_chatmessage("CLIENT", lines.isEmpty() ? tr("No CDN characters added.") : lines.join("\n"), "1");
+    }
+    else
+    {
+      append_server_chatmessage("CLIENT", tr("Usage: /cdn add <character folder link> | /cdn remove <name> | /cdn list"), "1");
+    }
+    ui_ooc_chat_message->clear();
+    return;
+  }
+
   if (ooc_message.startsWith("/load_case"))
   {
     QStringList command = ooc_message.split(" ", Qt::SkipEmptyParts);
@@ -5480,6 +5523,28 @@ void Courtroom::on_iniswap_dropdown_changed(int p_index)
 {
   focus_ic_input();
   QString iniswap = ui_iniswap_dropdown->itemText(p_index);
+
+  // A pasted link to a character folder on a CDN: register it and swap to it.
+  if (iniswap.startsWith("http://") || iniswap.startsWith("https://"))
+  {
+    QString cdn_name;
+    QString cdn_error;
+    ui_iniswap_dropdown->blockSignals(true);
+    if (CdnCharacters::instance().add(iniswap, &cdn_name, &cdn_error))
+    {
+      ui_iniswap_dropdown->setItemText(p_index, cdn_name);
+      iniswap = cdn_name;
+    }
+    else
+    {
+      ui_iniswap_dropdown->removeItem(p_index);
+      ui_iniswap_dropdown->setCurrentIndex(0);
+      ui_iniswap_dropdown->blockSignals(false);
+      append_server_chatmessage("CLIENT", cdn_error, "1");
+      return;
+    }
+    ui_iniswap_dropdown->blockSignals(false);
+  }
 
   QStringList swaplist;
   QStringList defswaplist = ao_app->get_list_file(ao_app->get_character_path(char_list.at(m_cid).name, "iniswaps.ini"));
