@@ -1,4 +1,5 @@
 #include "aoapplication.h"
+#include "cdn_characters.h"
 #include "courtroom.h"
 #include "file_functions.h"
 #include "options.h"
@@ -418,6 +419,16 @@ QString AOApplication::get_real_path(const VPath &vpath, const QStringList &suff
         }
         return path;
       }
+    }
+  }
+
+  // Not on disk: a registered CDN character (or its sounds/blips) may have it.
+  {
+    const QString cdn_path = CdnCharacters::instance().resolve(vpath.toQString(), suffixes);
+    if (!cdn_path.isEmpty())
+    {
+      asset_lookup_cache.insert(qHash(vpath), cdn_path);
+      return cdn_path;
     }
   }
 
