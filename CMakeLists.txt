@@ -28,6 +28,7 @@ qt_add_executable(AttorneyOnline
   src/aoapplication.cpp
   src/cdn_characters.cpp
   src/cdn_characters.h
+  src/cdn_file_engine.cpp
   src/aoapplication.h
   src/aoblipplayer.cpp
   src/aoblipplayer.h
@@ -154,6 +155,7 @@ endif()
 target_include_directories(AttorneyOnline PRIVATE src lib)
 target_link_directories(AttorneyOnline PRIVATE lib)
 target_link_libraries(AttorneyOnline PRIVATE
+  Qt${QT_VERSION_MAJOR}::CorePrivate
   Qt${QT_VERSION_MAJOR}::Core
   Qt${QT_VERSION_MAJOR}::Gui
   Qt${QT_VERSION_MAJOR}::Network
