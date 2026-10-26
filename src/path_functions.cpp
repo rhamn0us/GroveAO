@@ -391,7 +391,7 @@ QString AOApplication::get_real_path(const VPath &vpath, const QStringList &suff
   // content 1
   // content 2
 
-  // We search last to first
+  // We search last to first because I want to
   std::reverse(bases.begin(), bases.end());
 
   // content 2
@@ -422,9 +422,12 @@ QString AOApplication::get_real_path(const VPath &vpath, const QStringList &suff
     }
   }
 
-  // Not on disk: a registered CDN character (or its sounds/blips) may have it.
+  static thread_local bool in_cdn_lookup = false;
+  if (!in_cdn_lookup)
   {
-    const QString cdn_path = CdnCharacters::instance().resolve(vpath.toQString(), suffixes);
+    in_cdn_lookup = true;
+    const QString cdn_path = CdnCharacters::instance().resolve(vpath.toQString(), suffixes, [this](const QString &name) { return !get_real_path(VPath("characters/" + name + "/char.ini"), {""}).isEmpty(); });
+    in_cdn_lookup = false;
     if (!cdn_path.isEmpty())
     {
       asset_lookup_cache.insert(qHash(vpath), cdn_path);
