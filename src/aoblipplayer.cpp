@@ -1,5 +1,7 @@
 #include "aoblipplayer.h"
 
+#include "bass_cdn.h"
+
 AOBlipPlayer::AOBlipPlayer(AOApplication *ao_app)
     : ao_app(ao_app)
 {}
@@ -23,14 +25,7 @@ void AOBlipPlayer::setBlip(QString blip)
   {
     BASS_StreamFree(m_stream[i]);
 
-    if (path.endsWith(".opus"))
-    {
-      m_stream[i] = BASS_OPUS_StreamCreateFile(FALSE, path.utf16(), 0, 0, BASS_UNICODE | BASS_ASYNCFILE);
-    }
-    else
-    {
-      m_stream[i] = BASS_StreamCreateFile(FALSE, path.utf16(), 0, 0, BASS_UNICODE | BASS_ASYNCFILE);
-    }
+    m_stream[i] = bass_create_stream(path, BASS_UNICODE | BASS_ASYNCFILE);
   }
 
   updateInternalVolume();
