@@ -14,8 +14,8 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
-#include <QTimer>
 #include <QThread>
+#include <QTimer>
 #include <atomic>
 
 static const QStringList kSoundExts = {".opus", ".ogg", ".mp3", ".wav"};
@@ -164,7 +164,9 @@ bool CdnCharacters::normalize(const QString &link, QUrl *base, QString *name, QS
 
 QStringList CdnCharacters::caseVariants(const QString &path)
 {
-  auto cap = [](const QString &w) { return w.isEmpty() ? w : w.left(1).toUpper() + w.mid(1); };
+  auto cap = [](const QString &w) {
+    return w.isEmpty() ? w : w.left(1).toUpper() + w.mid(1);
+  };
   const QStringList segs = path.split('/');
   QStringList a, b, c;
   for (int i = 0; i < segs.size(); ++i)
@@ -431,8 +433,7 @@ void CdnCharacters::prefetch(const Entry &entry)
           parts = parts.mid(2);
         }
         const QString branch = parts.takeFirst();
-        const QUrl api(QString("https://api.github.com/repos/%1/%2/git/trees/%3?recursive=1")
-                           .arg(owner, repo, QString::fromLatin1(QUrl::toPercentEncoding(branch + ":" + parts.join('/')))));
+        const QUrl api(QString("https://api.github.com/repos/%1/%2/git/trees/%3?recursive=1").arg(owner, repo, QString::fromLatin1(QUrl::toPercentEncoding(branch + ":" + parts.join('/')))));
         QByteArray body;
         if (cdn_http_get(api, &body, 10000))
         {
