@@ -5149,7 +5149,7 @@ void Courtroom::on_ooc_return_pressed()
       QString error;
       if (cdn.add(args.at(2), &name, &error))
       {
-        append_server_chatmessage("CLIENT", tr("Added CDN character \"%1\". Type its name in the iniswap box to use it; files are fetched as needed.").arg(name), "1");
+        append_server_chatmessage("CLIENT", tr("Added CDN character \"%1\". Type its name in the iniswap box to use it; files stream from the CDN and are never saved.").arg(name), "1");
       }
       else
       {
@@ -5522,7 +5522,6 @@ void Courtroom::on_iniswap_dropdown_changed(int p_index)
   focus_ic_input();
   QString iniswap = ui_iniswap_dropdown->itemText(p_index);
 
-  // A pasted link to a character folder on a CDN: register it and swap to it.
   if (iniswap.startsWith("http://") || iniswap.startsWith("https://"))
   {
     QString cdn_name;
