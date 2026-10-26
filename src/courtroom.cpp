@@ -5149,9 +5149,7 @@ void Courtroom::on_ooc_return_pressed()
       QString error;
       if (cdn.add(args.at(2), &name, &error))
       {
-        append_server_chatmessage("CLIENT",
-                                  tr("Added CDN character \"%1\". Type its name in the iniswap box to use it; files are fetched as needed.").arg(name),
-                                  "1");
+        append_server_chatmessage("CLIENT", tr("Added CDN character \"%1\". Type its name in the iniswap box to use it; files are fetched as needed.").arg(name), "1");
       }
       else
       {
