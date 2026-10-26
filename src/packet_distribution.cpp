@@ -1,4 +1,5 @@
 #include "aoapplication.h"
+#include "cdn_characters.h"
 
 #include "courtroom.h"
 #include "debug_functions.h"
@@ -392,7 +393,15 @@ void AOApplication::server_packet_received(AOPacket packet)
   {
     if (is_courtroom_constructed() && courtroom_loaded)
     {
-      w_courtroom->chatmessage_enqueue(packet.content());
+      QStringList ms_content = packet.content();
+      for (const int field : {int(CHAR_NAME), int(OTHER_NAME)})
+      {
+        if (field < ms_content.size())
+        {
+          ms_content[field] = CdnCharacters::instance().ingestName(ms_content.at(field));
+        }
+      }
+      w_courtroom->chatmessage_enqueue(ms_content);
     }
   }
   else if (header == "MC")
