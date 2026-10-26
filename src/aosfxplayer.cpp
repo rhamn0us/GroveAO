@@ -1,5 +1,6 @@
 #include "aosfxplayer.h"
 
+#include "bass_cdn.h"
 #include "file_functions.h"
 
 AOSfxPlayer::AOSfxPlayer(AOApplication *ao_app)
@@ -32,14 +33,7 @@ void AOSfxPlayer::play(QString path)
     }
   }
 
-  if (path.endsWith(".opus"))
-  {
-    m_stream[m_current_stream_id] = BASS_OPUS_StreamCreateFile(FALSE, path.utf16(), 0, 0, BASS_STREAM_AUTOFREE | BASS_UNICODE | BASS_ASYNCFILE);
-  }
-  else
-  {
-    m_stream[m_current_stream_id] = BASS_StreamCreateFile(FALSE, path.utf16(), 0, 0, BASS_STREAM_AUTOFREE | BASS_UNICODE | BASS_ASYNCFILE);
-  }
+  m_stream[m_current_stream_id] = bass_create_stream(path, BASS_STREAM_AUTOFREE | BASS_UNICODE | BASS_ASYNCFILE);
 
   updateInternalVolume();
 
