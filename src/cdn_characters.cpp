@@ -3,7 +3,6 @@
 #include "file_functions.h"
 
 #include <QDateTime>
-#include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -14,76 +13,169 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
-#include <QThread>
-#include <QTimer>
-#include <atomic>
 
-static const QStringList kSoundExts = {".opus", ".ogg", ".mp3", ".wav"};
-static const qint64 kMissTtlMs = 5 * 60 * 1000; // don't re-ask the CDN for 5 minutes
+static const qint64 kMissTtlMs = 5 * 60 * 1000;
+static const qint64 kRamBudget = 256LL * 1024 * 1024;
 
-bool cdn_http_get(const QUrl &url, QByteArray *out, int timeout_ms)
+static bool allow_local_for_tests()
 {
-  // One manager per call: this runs on whatever thread asked for the file.
+  return qEnvironmentVariableIsSet("GROVEAO_TEST_ALLOW_LOCAL_CDN");
+}
+
+static int http_request(const QUrl &url, bool head, QByteArray *body, int timeout_ms = 5000)
+{
   QNetworkAccessManager nam;
   QNetworkRequest req(url);
   req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
   req.setTransferTimeout(timeout_ms);
   req.setHeader(QNetworkRequest::UserAgentHeader, "GroveAO");
-  QNetworkReply *reply = nam.get(req);
+  QNetworkReply *reply = head ? nam.head(req) : nam.get(req);
   QEventLoop loop;
   QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
   loop.exec();
-  const bool ok = reply->error() == QNetworkReply::NoError && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
-  if (ok && out)
+  const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+  if (body && status == 200)
   {
-    *out = reply->readAll();
+    *body = reply->readAll();
   }
   reply->deleteLater();
-  return ok;
+  return status;
 }
 
-CdnCharacters &CdnCharacters::instance()
+namespace
 {
-  static CdnCharacters inst;
-  return inst;
+struct Ram
+{
+  QMutex mutex;
+  QHash<QUrl, QByteArray> bodies;
+  QList<QUrl> order;
+  qint64 bytes = 0;
+  QHash<QUrl, qint64> misses;
+  QHash<QUrl, bool> hits;
+};
+
+Ram &ram()
+{
+  static Ram r;
+  return r;
 }
 
-CdnCharacters::CdnCharacters()
+void ram_store(const QUrl &url, const QByteArray &data)
 {
-  load();
-}
-
-QString CdnCharacters::cacheRoot() const
-{
-  return get_base_path() + "cdn_cache/";
-}
-
-QList<CdnCharacters::Entry> CdnCharacters::entries() const
-{
-  QMutexLocker lock(&m_mutex);
-  return m_entries;
-}
-
-bool CdnCharacters::contains(const QString &name) const
-{
-  QMutexLocker lock(&m_mutex);
-  for (const Entry &e : m_entries)
+  Ram &r = ram();
+  QMutexLocker lock(&r.mutex);
+  if (r.bodies.contains(url))
   {
-    if (e.name.compare(name, Qt::CaseInsensitive) == 0)
+    return;
+  }
+  r.bodies.insert(url, data);
+  r.order.append(url);
+  r.bytes += data.size();
+  while (r.bytes > kRamBudget && r.order.size() > 1)
+  {
+    const QUrl old = r.order.takeFirst();
+    r.bytes -= r.bodies.take(old).size();
+  }
+}
+} // namespace
+
+bool cdn_exists(const QUrl &url)
+{
+  Ram &r = ram();
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  {
+    QMutexLocker lock(&r.mutex);
+    if (r.bodies.contains(url) || r.hits.value(url, false))
     {
       return true;
     }
+    if (r.misses.contains(url) && now - r.misses.value(url) < kMissTtlMs)
+    {
+      return false;
+    }
   }
+  int status = http_request(url, true, nullptr);
+  if (status != 200 && status != 404 && status != 0)
+  {
+    QByteArray body;
+    status = http_request(url, false, &body, 8000);
+    if (status == 200)
+    {
+      ram_store(url, body);
+    }
+  }
+  QMutexLocker lock(&r.mutex);
+  if (status == 200)
+  {
+    r.hits.insert(url, true);
+    return true;
+  }
+  r.misses.insert(url, now);
   return false;
 }
 
-// ---------------------------------------------------------------- validation
+QByteArray cdn_fetch(const QUrl &url, bool *ok)
+{
+  Ram &r = ram();
+  {
+    QMutexLocker lock(&r.mutex);
+    if (r.bodies.contains(url))
+    {
+      *ok = true;
+      return r.bodies.value(url);
+    }
+  }
+  QByteArray body;
+  const bool good = http_request(url, false, &body, 15000) == 200;
+  *ok = good;
+  if (good)
+  {
+    ram_store(url, body);
+  }
+  return body;
+}
+
+QString CdnCharacters::toVirtualPath(const QUrl &url)
+{
+  QString host = url.host();
+  if (url.port() > 0)
+  {
+    host += ":" + QString::number(url.port());
+  }
+  return "cdnfs:/" + url.scheme() + "/" + host + url.path();
+}
+
+bool CdnCharacters::fromVirtualPath(const QString &path, QUrl *url)
+{
+  static const QRegularExpression re(R"(^cdnfs:/(https?)/([^/]+)(/.*)$)");
+  const QRegularExpressionMatch m = re.match(path);
+  if (!m.hasMatch())
+  {
+    return false;
+  }
+  if (m.captured(1) == "http" && !allow_local_for_tests())
+  {
+    return false;
+  }
+  QStringList segs = m.captured(3).split('/');
+  for (QString &s : segs)
+  {
+    s = QString::fromLatin1(QUrl::toPercentEncoding(s));
+  }
+  QUrl u = QUrl::fromEncoded(QString("%1://%2%3").arg(m.captured(1), m.captured(2), segs.join('/')).toLatin1());
+  if (!u.isValid() || !isSafeHost(u.host()))
+  {
+    return false;
+  }
+  *url = u;
+  return true;
+}
 
 bool CdnCharacters::isSafeHost(const QString &host_in)
 {
-  if (qEnvironmentVariableIsSet("GROVEAO_TEST_ALLOW_LOCAL_CDN"))
+  if (allow_local_for_tests())
   {
-    return true; // automated tests serve a fake CDN from localhost
+    return true;
   }
   const QString host = host_in.toLower();
   if (host.isEmpty() || host == "localhost" || host.endsWith(".local") || host.endsWith(".internal"))
@@ -92,7 +184,7 @@ bool CdnCharacters::isSafeHost(const QString &host_in)
   }
   if (host.contains(':'))
   {
-    return false; // raw IPv6 literal
+    return false;
   }
   static const QRegularExpression ipv4(R"(^(\d+)\.(\d+)\.(\d+)\.(\d+)$)");
   const QRegularExpressionMatch m = ipv4.match(host);
@@ -130,9 +222,9 @@ bool CdnCharacters::normalize(const QString &link, QUrl *base, QString *name, QS
   {
     return fail(QObject::tr("That host isn't allowed (local/private address)."));
   }
-  if (!qEnvironmentVariableIsSet("GROVEAO_TEST_ALLOW_LOCAL_CDN"))
+  if (!allow_local_for_tests())
   {
-    url.setScheme("https"); // plain http is not worth the risk
+    url.setScheme("https");
   }
   url.setQuery(QString());
   url.setFragment(QString());
@@ -168,7 +260,9 @@ QStringList CdnCharacters::caseVariants(const QString &path)
     return w.isEmpty() ? w : w.left(1).toUpper() + w.mid(1);
   };
   const QStringList segs = path.split('/');
-  QStringList a, b, c;
+  QStringList a;
+  QStringList b;
+  QStringList c;
   for (int i = 0; i < segs.size(); ++i)
   {
     a << cap(segs[i]);
@@ -191,7 +285,68 @@ QStringList CdnCharacters::caseVariants(const QString &path)
   return out;
 }
 
-// ------------------------------------------------------------- persistence
+CdnCharacters &CdnCharacters::instance()
+{
+  static CdnCharacters inst;
+  return inst;
+}
+
+CdnCharacters::CdnCharacters()
+{
+  load();
+}
+
+QString CdnCharacters::sourcesFile() const
+{
+  return get_base_path() + "cdn_sources.txt";
+}
+
+QStringList CdnCharacters::sources() const
+{
+  QStringList out;
+  QFile f(sourcesFile());
+  if (!f.exists())
+  {
+    return {"https://mastyra.com/base/", "https://raw.githubusercontent.com/OfficialLawyerEmporium/OLEBase/refs/heads/master/base/"};
+  }
+  if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+  {
+    return out;
+  }
+  for (QString line : QString::fromUtf8(f.readAll()).split('\n'))
+  {
+    line = line.trimmed();
+    if (line.isEmpty() || line.startsWith('#'))
+    {
+      continue;
+    }
+    QUrl base;
+    if (normalize(line, &base, nullptr, nullptr))
+    {
+      out << base.toString();
+    }
+  }
+  return out;
+}
+
+QList<CdnCharacters::Entry> CdnCharacters::entries() const
+{
+  QMutexLocker lock(&m_mutex);
+  return m_entries;
+}
+
+bool CdnCharacters::contains(const QString &name) const
+{
+  QMutexLocker lock(&m_mutex);
+  for (const Entry &e : m_entries)
+  {
+    if (e.name.compare(name, Qt::CaseInsensitive) == 0)
+    {
+      return true;
+    }
+  }
+  return false;
+}
 
 void CdnCharacters::load()
 {
@@ -226,6 +381,30 @@ void CdnCharacters::save() const
   }
 }
 
+void CdnCharacters::registerEntry(const QString &name, const QUrl &base, bool persist)
+{
+  QMutexLocker lock(&m_mutex);
+  bool found = false;
+  for (Entry &e : m_entries)
+  {
+    if (e.name.compare(name, Qt::CaseInsensitive) == 0)
+    {
+      e.base = base;
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+  {
+    m_entries.append({name, base});
+  }
+  m_discover_miss.remove(name.toLower());
+  if (persist)
+  {
+    save();
+  }
+}
+
 bool CdnCharacters::add(const QString &link, QString *name_out, QString *error)
 {
   QUrl base;
@@ -234,330 +413,181 @@ bool CdnCharacters::add(const QString &link, QString *name_out, QString *error)
   {
     return false;
   }
-  Entry entry{name, base};
-  {
-    QMutexLocker lock(&m_mutex);
-    for (Entry &e : m_entries)
-    {
-      if (e.name.compare(name, Qt::CaseInsensitive) == 0)
-      {
-        e = entry;
-        entry = e;
-        name.clear();
-        break;
-      }
-    }
-    if (!name.isEmpty())
-    {
-      m_entries.append(entry);
-    }
-    m_misses.clear();
-    save();
-  }
+  registerEntry(name, base, true);
   if (name_out)
   {
-    *name_out = entry.name;
+    *name_out = name;
   }
-  prefetch(entry);
   return true;
 }
 
 void CdnCharacters::remove(const QString &name)
 {
+  QMutexLocker lock(&m_mutex);
+  for (int i = 0; i < m_entries.size(); ++i)
+  {
+    if (m_entries[i].name.compare(name, Qt::CaseInsensitive) == 0)
+    {
+      m_entries.removeAt(i);
+      break;
+    }
+  }
+  m_discovered.remove(name.toLower());
+  save();
+}
+
+QString CdnCharacters::ingestName(const QString &raw)
+{
+  const int idx = raw.indexOf("~cdn~");
+  if (idx < 0)
+  {
+    return raw;
+  }
+  const QString name = raw.left(idx);
+  QString loc = raw.mid(idx + 5);
+  if (loc.startsWith('!'))
+  {
+    loc.remove(0, 1);
+  }
+  QUrl base;
+  if (!name.isEmpty() && normalize("https://" + loc, &base, nullptr, nullptr))
+  {
+    registerEntry(name, base, false);
+  }
+  return name.isEmpty() ? raw : name;
+}
+
+static QString enc_path(const QString &rel)
+{
+  QStringList segs = rel.split('/');
+  for (QString &s : segs)
+  {
+    s = QString::fromLatin1(QUrl::toPercentEncoding(s));
+  }
+  return segs.join('/');
+}
+
+QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::function<bool(const QString &)> &is_local)
+{
+  const QString key = name.toLower();
+  if (is_local(name))
+  {
+    return {};
+  }
+  QList<QUrl> bases;
   {
     QMutexLocker lock(&m_mutex);
-    for (int i = 0; i < m_entries.size(); ++i)
+    for (const Entry &e : m_entries)
     {
-      if (m_entries[i].name.compare(name, Qt::CaseInsensitive) == 0)
+      if (e.name.compare(name, Qt::CaseInsensitive) == 0)
       {
-        m_entries.removeAt(i);
+        bases << e.base;
+      }
+    }
+    bases << m_discovered.value(key);
+    if (!bases.isEmpty())
+    {
+      return bases;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_discover_miss.contains(key) && now - m_discover_miss.value(key) < kMissTtlMs)
+    {
+      return {};
+    }
+  }
+  QList<QUrl> found;
+  for (const QString &src : sources())
+  {
+    for (const QString &variant : QStringList{name} + caseVariants(name))
+    {
+      const QUrl base = QUrl(src + "characters/" + enc_path(variant) + "/");
+      if (cdn_exists(QUrl(base.toString() + "char.ini")))
+      {
+        found << base;
         break;
       }
     }
-    save();
   }
-  QDir(cacheRoot() + "characters/" + name.toLower()).removeRecursively();
-  QDir(cacheRoot() + "characters/" + name).removeRecursively();
+  QMutexLocker lock(&m_mutex);
+  if (found.isEmpty())
+  {
+    m_discover_miss.insert(key, QDateTime::currentMSecsSinceEpoch());
+  }
+  else
+  {
+    m_discovered.insert(key, found);
+  }
+  return found;
 }
 
-// ----------------------------------------------------------------- lookups
-
-QString CdnCharacters::cachedPath(const QString &vpath, const QString &suffix) const
+QList<QUrl> CdnCharacters::soundRoots() const
 {
-  const QString p = cacheRoot() + vpath + suffix;
-  return file_exists(p) ? p : QString();
-}
-
-/// CDN URLs that could hold vpath+suffix. Characters: that character's folder.
-/// sounds/…: the "base/" folder next to every registered character, plus the
-/// character's own folder for sfx.
-QStringList CdnCharacters::urlsFor(const QString &vpath, const QString &suffix) const
-{
-  QStringList urls;
-  static const QRegularExpression charRe(R"(^characters/([^/]+)/(.+)$)", QRegularExpression::CaseInsensitiveOption);
-  static const QRegularExpression soundRe(R"(^sounds/([^/]+)/(.+)$)", QRegularExpression::CaseInsensitiveOption);
-  auto enc = [](const QString &rel) {
-    QStringList segs = rel.split('/');
-    for (QString &s : segs)
+  QList<QUrl> roots;
+  auto add_root = [&](const QUrl &char_base) {
+    const QUrl root = char_base.resolved(QUrl("../../"));
+    if (!roots.contains(root))
     {
-      s = QString::fromLatin1(QUrl::toPercentEncoding(s));
+      roots << root;
     }
-    return segs.join('/');
   };
-  const QList<Entry> list = entries();
-  const QRegularExpressionMatch cm = charRe.match(vpath);
-  if (cm.hasMatch())
+  QMutexLocker lock(&m_mutex);
+  for (const Entry &e : m_entries)
   {
-    for (const Entry &e : list)
-    {
-      if (e.name.compare(cm.captured(1), Qt::CaseInsensitive) != 0)
-      {
-        continue;
-      }
-      const QString rel = cm.captured(2) + suffix;
-      urls << e.base.toString() + enc(rel);
-      for (const QString &v : caseVariants(rel))
-      {
-        urls << e.base.toString() + enc(v);
-      }
-    }
-    return urls;
+    add_root(e.base);
   }
-  const QRegularExpressionMatch sm = soundRe.match(vpath);
-  if (sm.hasMatch())
+  for (const QList<QUrl> &list : m_discovered)
   {
-    QSet<QString> seen;
-    for (const Entry &e : list)
+    for (const QUrl &b : list)
     {
-      // .../characters/<Name>/ -> .../  (the CDN's "base/" folder)
-      QUrl root = e.base.resolved(QUrl("../../"));
-      const QString rootStr = root.toString();
-      if (seen.contains(rootStr))
-      {
-        continue;
-      }
-      seen.insert(rootStr);
-      const QString rel = "sounds/" + sm.captured(1) + "/" + sm.captured(2) + suffix;
-      urls << rootStr + enc(rel);
-      for (const QString &v : caseVariants(sm.captured(2) + suffix))
-      {
-        urls << rootStr + enc("sounds/" + sm.captured(1) + "/" + v);
-      }
+      add_root(b);
     }
   }
-  return urls;
+  return roots;
 }
 
-bool CdnCharacters::fetchInto(const QString &vpath, const QString &suffix, const QStringList &urls)
+QString CdnCharacters::probe(const QList<QUrl> &dirs, const QString &rel, const QStringList &suffixes)
 {
-  for (const QString &u : urls)
-  {
-    QByteArray data;
-    if (!cdn_http_get(QUrl(u), &data))
-    {
-      continue;
-    }
-    const QString dest = cacheRoot() + vpath + suffix;
-    QDir().mkpath(QFileInfo(dest).absolutePath());
-    QFile f(dest);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-    {
-      f.write(data);
-      return true;
-    }
-  }
-  return false;
-}
-
-QString CdnCharacters::resolve(const QString &vpath, const QStringList &suffixes)
-{
-  if (vpath.isEmpty() || vpath.startsWith("http") || m_entries.isEmpty())
-  {
-    return QString();
-  }
   for (const QString &suffix : suffixes)
   {
-    const QString hit = cachedPath(vpath, suffix);
-    if (!hit.isEmpty())
+    for (const QUrl &dir : dirs)
     {
-      return hit;
-    }
-  }
-  const qint64 now = QDateTime::currentMSecsSinceEpoch();
-  for (const QString &suffix : suffixes)
-  {
-    const QString key = vpath + suffix;
-    {
-      QMutexLocker lock(&m_mutex);
-      if (m_misses.contains(key) && now - m_misses.value(key) < kMissTtlMs)
+      for (const QString &r : QStringList{rel + suffix} + caseVariants(rel + suffix))
       {
-        continue;
+        const QUrl url(dir.toString() + enc_path(r));
+        if (cdn_exists(url))
+        {
+          return toVirtualPath(url);
+        }
       }
     }
-    const QStringList urls = urlsFor(vpath, suffix);
-    if (urls.isEmpty())
-    {
-      continue; // not something any CDN can have
-    }
-    if (fetchInto(vpath, suffix, urls))
-    {
-      return cachedPath(vpath, suffix);
-    }
-    QMutexLocker lock(&m_mutex);
-    m_misses.insert(key, now);
   }
   return QString();
 }
 
-// ---------------------------------------------------------------- prefetch
-
-/// Downloads char.ini, the icon and emote buttons, and (on GitHub raw links)
-/// the whole folder in the background, so first use doesn't stall.
-void CdnCharacters::prefetch(const Entry &entry)
+QString CdnCharacters::resolve(const QString &vpath, const QStringList &suffixes, const std::function<bool(const QString &)> &is_local)
 {
-  QThread *worker = QThread::create([this, entry]() {
-    int fetched = 0;
-    const QString vroot = "characters/" + entry.name + "/";
-    QStringList files;
-
-    // GitHub raw links: one API call lists the folder.
-    if (entry.base.host() == "raw.githubusercontent.com")
-    {
-      QStringList parts = entry.base.path().split('/', Qt::SkipEmptyParts);
-      if (parts.size() >= 4)
-      {
-        const QString owner = parts.takeFirst();
-        const QString repo = parts.takeFirst();
-        if (parts.size() >= 2 && parts[0] == "refs" && parts[1] == "heads")
-        {
-          parts = parts.mid(2);
-        }
-        const QString branch = parts.takeFirst();
-        const QUrl api(QString("https://api.github.com/repos/%1/%2/git/trees/%3?recursive=1").arg(owner, repo, QString::fromLatin1(QUrl::toPercentEncoding(branch + ":" + parts.join('/')))));
-        QByteArray body;
-        if (cdn_http_get(api, &body, 10000))
-        {
-          for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("tree").toArray())
-          {
-            const QJsonObject o = v.toObject();
-            if (o.value("type").toString() == "blob")
-            {
-              files << o.value("path").toString();
-            }
-          }
-        }
-      }
-    }
-    if (!files.contains("char.ini", Qt::CaseInsensitive))
-    {
-      files.prepend("char.ini");
-    }
-
-    QByteArray ini;
-    QMutex count_mutex;
-    auto download_one = [&](const QString &rel) {
-      const QString dest = cacheRoot() + vroot + rel;
-      if (file_exists(dest))
-      {
-        return;
-      }
-      QStringList segs = rel.split('/');
-      for (QString &s : segs)
-      {
-        s = QString::fromLatin1(QUrl::toPercentEncoding(s));
-      }
-      QByteArray data;
-      if (!cdn_http_get(QUrl(entry.base.toString() + segs.join('/')), &data, 15000))
-      {
-        return;
-      }
-      QDir().mkpath(QFileInfo(dest).absolutePath());
-      QFile f(dest);
-      if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-      {
-        f.write(data);
-        QMutexLocker lock(&count_mutex);
-        ++fetched;
-        if (rel.compare("char.ini", Qt::CaseInsensitive) == 0)
-        {
-          ini = data;
-        }
-      }
-    };
-    // A few plain threads rather than the global pool, which is a single
-    // thread on small machines and would starve behind this task.
-    {
-      std::atomic<int> next{0};
-      QList<QThread *> helpers;
-      auto drain = [&]() {
-        for (int i = next++; i < files.size(); i = next++)
-        {
-          download_one(files.at(i));
-        }
-      };
-      for (int i = 0; i < 5; ++i)
-      {
-        helpers << QThread::create(drain);
-        helpers.last()->start();
-      }
-      drain();
-      for (QThread *t : helpers)
-      {
-        t->wait();
-        delete t;
-      }
-    }
-    if (ini.isEmpty())
-    {
-      QFile f(cacheRoot() + vroot + "char.ini");
-      if (f.open(QIODevice::ReadOnly))
-      {
-        ini = f.readAll();
-      }
-    }
-    prefetchSounds(entry, ini);
-    Q_EMIT prefetchFinished(entry.name, fetched);
-  });
-  connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-  worker->start();
-}
-
-/// Pulls the sounds and blips char.ini refers to from the CDN's sounds/ tree.
-void CdnCharacters::prefetchSounds(const Entry &, const QByteArray &ini)
-{
-  QStringList general;
-  QString blips;
-  QString section;
-  for (QString line : QString::fromUtf8(ini).split('\n'))
+  if (vpath.isEmpty() || vpath.startsWith("http") || vpath.startsWith("cdnfs:"))
   {
-    line = line.trimmed();
-    if (line.startsWith('['))
-    {
-      section = line.toLower();
-      continue;
-    }
-    const int eq = line.indexOf('=');
-    if (eq < 0)
-    {
-      continue;
-    }
-    const QString key = line.left(eq).trimmed().toLower();
-    const QString val = line.mid(eq + 1).trimmed();
-    if (section == "[soundn]" && !val.isEmpty())
-    {
-      general << val.toLower();
-    }
-    else if (section == "[options]" && (key == "blips" || key == "gender") && blips.isEmpty())
-    {
-      blips = val.toLower();
-    }
+    return QString();
   }
-  for (const QString &name : general)
+  static const QRegularExpression charRe(R"(^characters/([^/]+)/(.+)$)", QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression soundRe(R"(^sounds/([^/]+)/(.+)$)", QRegularExpression::CaseInsensitiveOption);
+
+  const QRegularExpressionMatch cm = charRe.match(vpath);
+  if (cm.hasMatch())
   {
-    resolve("sounds/general/" + name, kSoundExts);
+    const QList<QUrl> bases = characterBases(cm.captured(1), is_local);
+    return bases.isEmpty() ? QString() : probe(bases, cm.captured(2), suffixes);
   }
-  if (!blips.isEmpty())
+  const QRegularExpressionMatch sm = soundRe.match(vpath);
+  if (sm.hasMatch())
   {
-    resolve("sounds/blips/" + blips, kSoundExts);
+    QList<QUrl> dirs;
+    for (const QUrl &root : soundRoots())
+    {
+      dirs << QUrl(root.toString() + "sounds/" + enc_path(sm.captured(1)) + "/");
+    }
+    return dirs.isEmpty() ? QString() : probe(dirs, sm.captured(2), suffixes);
   }
+  return QString();
 }
