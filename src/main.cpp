@@ -2,6 +2,7 @@
 
 #include "androidstorage.h"
 
+#include "cdn_characters.h"
 #include "courtroom.h"
 #include "file_functions.h"
 #include "lobby.h"
@@ -20,6 +21,7 @@ int main(int argc, char *argv[])
   qRegisterMetaType<AOPacket>();
 
   QApplication app(argc, argv);
+  cdn_install_file_engine();
 
   QApplication::setDesktopFileName("GroveAO");
 
