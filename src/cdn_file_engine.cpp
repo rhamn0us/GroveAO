@@ -4,6 +4,9 @@
 
 #include <QFile>
 
+#include <QtGlobal>
+
+#include <memory>
 #include <optional>
 
 class CdnFileEngine : public QAbstractFileEngine
@@ -116,7 +119,17 @@ private:
 class CdnFileEngineHandler : public QAbstractFileEngineHandler
 {
 public:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+  // Qt 6.8+ changed the private handler API to fucking fix an owning pointer.
+  std::unique_ptr<QAbstractFileEngine> create(const QString &fileName) const override
+  {
+    if (!fileName.startsWith("cdnfs:/"))
+      return nullptr;
+    return std::make_unique<CdnFileEngine>(fileName);
+  }
+#else
   QAbstractFileEngine *create(const QString &fileName) const override { return fileName.startsWith("cdnfs:/") ? new CdnFileEngine(fileName) : nullptr; }
+#endif
 };
 
 void cdn_install_file_engine()
