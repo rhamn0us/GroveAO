@@ -3,7 +3,6 @@
 #include "file_functions.h"
 
 #include <QDateTime>
-#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -13,44 +12,45 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QThread>
+#include <QVector>
 
-static const qint64 kMissTtlMs = 5 * 60 * 1000;
-static const qint64 kRamBudget = 256LL * 1024 * 1024;
+#include <atomic>
+
+static const qint64 kNotFoundTtlMs = 5 * 60 * 1000; // a real 404
+static const qint64 kErrorTtlMs = 15 * 1000;        // timeouts, refused connections, 5xx: retry soon
+static const qint64 kRamBudget = 64LL * 1024 * 1024;  // finished small files only, RAM only, never disk
+static const qint64 kRamMaxItem = 16LL * 1024 * 1024;
+static const qint64 kMaxStreamBytes = 512LL * 1024 * 1024; // sanity cap for a single stream
 
 static bool allow_local_for_tests()
 {
   return qEnvironmentVariableIsSet("GROVEAO_TEST_ALLOW_LOCAL_CDN");
 }
 
-static int http_request(const QUrl &url, bool head, QByteArray *body, int timeout_ms = 5000)
-{
-  QNetworkAccessManager nam;
-  QNetworkRequest req(url);
-  req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-  req.setTransferTimeout(timeout_ms);
-  req.setHeader(QNetworkRequest::UserAgentHeader, "GroveAO");
-  QNetworkReply *reply = head ? nam.head(req) : nam.get(req);
-  QEventLoop loop;
-  QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-  loop.exec();
-  const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-  if (body && status == 200)
-  {
-    *body = reply->readAll();
-  }
-  reply->deleteLater();
-  return status;
-}
-
 namespace
 {
+// ---------------------------------------------------------------------------
+// Small RAM-only memory of what we already know about a URL.
+//   hits    : URL answered 200 once
+//   misses  : URL answered 404 (long TTL) or failed (short TTL)
+//   bodies  : files that finished streaming completely and are small, so re-opening
+//             them (char.ini is re-read for every chat message) costs no network.
+// Nothing here is ever written to disk.
+// ---------------------------------------------------------------------------
+struct Miss
+{
+  qint64 expiry = 0;
+  int status = 0;
+};
+
 struct Ram
 {
   QMutex mutex;
   QHash<QUrl, QByteArray> bodies;
   QList<QUrl> order;
   qint64 bytes = 0;
-  QHash<QUrl, qint64> misses;
+  QHash<QUrl, Miss> misses;
   QHash<QUrl, bool> hits;
 };
 
@@ -62,6 +62,10 @@ Ram &ram()
 
 void ram_store(const QUrl &url, const QByteArray &data)
 {
+  if (data.size() > kRamMaxItem)
+  {
+    return;
+  }
   Ram &r = ram();
   QMutexLocker lock(&r.mutex);
   if (r.bodies.contains(url))
@@ -77,62 +81,486 @@ void ram_store(const QUrl &url, const QByteArray &data)
     r.bytes -= r.bodies.take(old).size();
   }
 }
-} // namespace
 
-bool cdn_exists(const QUrl &url)
+bool ram_lookup(const QUrl &url, QByteArray *out)
 {
   Ram &r = ram();
-  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  QMutexLocker lock(&r.mutex);
+  const auto it = r.bodies.constFind(url);
+  if (it == r.bodies.constEnd())
   {
-    QMutexLocker lock(&r.mutex);
-    if (r.bodies.contains(url) || r.hits.value(url, false))
-    {
-      return true;
-    }
-    if (r.misses.contains(url) && now - r.misses.value(url) < kMissTtlMs)
-    {
-      return false;
-    }
+    return false;
   }
-  int status = http_request(url, true, nullptr);
-  if (status != 200 && status != 404 && status != 0)
+  *out = it.value();
+  return true;
+}
+
+// 200 / the recorded failure status / -1 when we know nothing (or the memory expired).
+int cached_status(const QUrl &url)
+{
+  Ram &r = ram();
+  QMutexLocker lock(&r.mutex);
+  if (r.bodies.contains(url) || r.hits.value(url, false))
   {
-    QByteArray body;
-    status = http_request(url, false, &body, 8000);
-    if (status == 200)
-    {
-      ram_store(url, body);
-    }
+    return 200;
   }
+  const auto it = r.misses.constFind(url);
+  if (it != r.misses.constEnd() && QDateTime::currentMSecsSinceEpoch() < it->expiry)
+  {
+    return it->status;
+  }
+  return -1;
+}
+
+void note_status(const QUrl &url, int status)
+{
+  Ram &r = ram();
   QMutexLocker lock(&r.mutex);
   if (status == 200)
   {
     r.hits.insert(url, true);
-    return true;
+    r.misses.remove(url);
+    return;
   }
-  r.misses.insert(url, now);
-  return false;
+  const bool definitive = (status == 404 || status == 410);
+  r.misses.insert(url, Miss{QDateTime::currentMSecsSinceEpoch() + (definitive ? kNotFoundTtlMs : kErrorTtlMs), status});
 }
 
-QByteArray cdn_fetch(const QUrl &url, bool *ok)
+// ---------------------------------------------------------------------------
+// One dedicated network thread with ONE QNetworkAccessManager, so connections (and TLS
+// sessions) are reused instead of rebuilding a manager for every probe. Callers on any
+// thread hand work over and wait on a condition variable; nobody spins a nested event loop.
+// ---------------------------------------------------------------------------
+struct Net
 {
-  Ram &r = ram();
+  QThread thread;
+  QObject *ctx = nullptr;
+  QNetworkAccessManager *nam = nullptr;
+
+  static Net &get()
   {
-    QMutexLocker lock(&r.mutex);
-    if (r.bodies.contains(url))
+    static Net *n = new Net; // intentionally leaked: lives until process exit
+    return *n;
+  }
+
+  Net()
+  {
+    thread.setObjectName("GroveAO CDN network");
+    ctx = new QObject;
+    ctx->moveToThread(&thread);
+    thread.start();
+    QMetaObject::invokeMethod(ctx, [this] { nam = new QNetworkAccessManager(ctx); }, Qt::BlockingQueuedConnection);
+  }
+
+  template <class F>
+  void post(F f)
+  {
+    QMetaObject::invokeMethod(ctx, std::move(f), Qt::QueuedConnection);
+  }
+};
+
+QNetworkRequest make_request(const QUrl &url, int timeout_ms)
+{
+  QNetworkRequest req(url);
+  req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+  req.setTransferTimeout(timeout_ms);
+  req.setHeader(QNetworkRequest::UserAgentHeader, "GroveAO");
+  // Assets are already compressed; identity keeps Content-Length truthful so size() is exact.
+  req.setRawHeader("Accept-Encoding", "identity");
+  return req;
+}
+
+int status_of(QNetworkReply *r)
+{
+  return r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+}
+
+// Stop a transfer we no longer need. A response that is already a failure (404, 403, ...)
+// has only a tiny error body left, and Qt warns when it is aborted because it reports the
+// HTTP error right afterwards, so those are left to finish on their own.
+void hang_up(QNetworkReply *r)
+{
+  if (r && r->isRunning() && r->error() == QNetworkReply::NoError && status_of(r) < 400)
+  {
+    r->abort();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Existence probes. Many candidate URLs are asked about at the same time, so resolving an
+// asset costs one round trip instead of one round trip per suffix / folder / case variant.
+// ---------------------------------------------------------------------------
+struct Batch
+{
+  QMutex m;
+  QWaitCondition cv;
+  QVector<int> st;                       // -1 = not answered yet
+  QVector<QPointer<QNetworkReply>> replies; // network thread only
+  std::atomic<bool> cancel{false};
+};
+
+void batch_record(const std::shared_ptr<Batch> &b, int i, const QUrl &url, int status)
+{
+  if (b->cancel)
+  {
+    return; // we aborted it ourselves; that says nothing about the URL
+  }
+  {
+    QMutexLocker l(&b->m);
+    if (b->st[i] != -1)
     {
-      *ok = true;
-      return r.bodies.value(url);
+      return;
+    }
+    b->st[i] = status;
+  }
+  note_status(url, status);
+  b->cv.wakeAll();
+}
+
+// network thread
+void start_probe(const std::shared_ptr<Batch> &b, int i, const QUrl &url, bool use_get)
+{
+  if (b->cancel)
+  {
+    return;
+  }
+  Net &n = Net::get();
+  QNetworkReply *r = use_get ? n.nam->get(make_request(url, 6000)) : n.nam->head(make_request(url, 6000));
+  b->replies[i] = r;
+  if (use_get)
+  {
+    // HEAD was refused by this server: ask with GET but only read the headers, then hang up.
+    // The body is never downloaded.
+    QObject::connect(r, &QNetworkReply::metaDataChanged, n.ctx, [b, i, url, r] {
+      const int st = status_of(r);
+      if (st > 0 && (st < 300 || st >= 400))
+      {
+        batch_record(b, i, url, st);
+        hang_up(r);
+      }
+    });
+  }
+  QObject::connect(r, &QNetworkReply::finished, n.ctx, [b, i, url, r, use_get] {
+    const int st = status_of(r);
+    if (!use_get && st != 0 && st != 200 && st != 404 && !b->cancel)
+    {
+      start_probe(b, i, url, true);
+    }
+    else
+    {
+      batch_record(b, i, url, st);
+    }
+    r->deleteLater();
+  });
+}
+
+// Returns one status per URL (-1 = unanswered). With stop_at_first the call returns as soon
+// as the first URL in list order is known to exist and every URL before it is known to
+// not exist, so list order is priority order.
+QVector<int> probe_batch(const QList<QUrl> &urls, bool stop_at_first)
+{
+  const int n = urls.size();
+  QVector<int> out(n, -1);
+  QList<int> todo;
+  for (int i = 0; i < n; ++i)
+  {
+    out[i] = cached_status(urls[i]);
+    if (out[i] == -1)
+    {
+      todo << i;
     }
   }
-  QByteArray body;
-  const bool good = http_request(url, false, &body, 15000) == 200;
-  *ok = good;
-  if (good)
+  if (todo.isEmpty())
   {
-    ram_store(url, body);
+    return out;
   }
-  return body;
+
+  std::shared_ptr<Batch> b;
+  auto value = [&](int i) { return out[i] != -1 ? out[i] : (b ? b->st[i] : -1); };
+  auto decided = [&]() {
+    for (int i = 0; i < n; ++i)
+    {
+      const int v = value(i);
+      if (v == -1)
+      {
+        if (stop_at_first)
+        {
+          return false; // an earlier-priority URL is still pending
+        }
+        continue;
+      }
+      if (v == 200 && stop_at_first)
+      {
+        return true;
+      }
+    }
+    for (int i = 0; i < n; ++i)
+    {
+      if (value(i) == -1)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (decided())
+  {
+    return out;
+  }
+
+  b = std::make_shared<Batch>();
+  b->st = QVector<int>(n, -1);
+  b->replies.resize(n);
+  Net::get().post([b, urls, todo] {
+    for (int i : todo)
+    {
+      start_probe(b, i, urls[i], false);
+    }
+  });
+  {
+    QMutexLocker l(&b->m);
+    while (!decided())
+    {
+      if (!b->cv.wait(&b->m, 30000UL))
+      {
+        break;
+      }
+    }
+    for (int i = 0; i < n; ++i)
+    {
+      out[i] = value(i);
+    }
+  }
+  b->cancel = true;
+  Net::get().post([b] {
+    for (const QPointer<QNetworkReply> &r : std::as_const(b->replies))
+    {
+      hang_up(r.data());
+    }
+  });
+  return out;
+}
+} // namespace
+
+// ---------------------------------------------------------------------------
+// CdnStream: progressive download that the consumer reads while it is still arriving.
+// ---------------------------------------------------------------------------
+void CdnStream::onHeaders(int status, qint64 length)
+{
+  {
+    QMutexLocker l(&m_mutex);
+    if (m_headers)
+    {
+      return;
+    }
+    m_status = status;
+    m_total = length;
+    m_headers = true;
+  }
+  note_status(url, status);
+  m_cond.wakeAll();
+}
+
+void CdnStream::onData(const QByteArray &data)
+{
+  bool abort_now = false;
+  {
+    QMutexLocker l(&m_mutex);
+    if (m_cancelled || data.isEmpty())
+    {
+      return;
+    }
+    m_buf.append(data);
+    if (m_buf.size() > kMaxStreamBytes)
+    {
+      m_failed = true;
+      abort_now = true;
+    }
+  }
+  m_cond.wakeAll();
+  if (abort_now)
+  {
+    cancel();
+  }
+}
+
+void CdnStream::onFinished(bool ok)
+{
+  QByteArray copy;
+  bool store = false;
+  bool no_status = false;
+  {
+    QMutexLocker l(&m_mutex);
+    m_finished = true;
+    no_status = !m_headers;
+    m_headers = true;
+    if (!ok || m_status != 200 || (m_total >= 0 && m_buf.size() != m_total))
+    {
+      m_failed = true;
+    }
+    store = !m_failed && !m_cancelled;
+    if (store)
+    {
+      copy = m_buf;
+    }
+  }
+  if (no_status)
+  {
+    note_status(url, 0);
+  }
+  m_cond.wakeAll();
+  if (store)
+  {
+    ram_store(url, copy);
+  }
+}
+
+void CdnStream::completeFrom(const QByteArray &body)
+{
+  QMutexLocker l(&m_mutex);
+  m_buf = body;
+  m_status = 200;
+  m_total = body.size();
+  m_headers = true;
+  m_finished = true;
+}
+
+void CdnStream::failWith(int status)
+{
+  QMutexLocker l(&m_mutex);
+  m_status = status;
+  m_headers = true;
+  m_finished = true;
+  m_failed = true;
+}
+
+bool CdnStream::waitOpen()
+{
+  QMutexLocker l(&m_mutex);
+  while (!m_headers && !m_finished)
+  {
+    if (!m_cond.wait(&m_mutex, 30000UL))
+    {
+      m_failed = true;
+      break;
+    }
+  }
+  return m_headers && m_status == 200 && !m_failed;
+}
+
+qint64 CdnStream::size()
+{
+  QMutexLocker l(&m_mutex);
+  if (m_total >= 0)
+  {
+    return m_total;
+  }
+  while (!m_finished)
+  {
+    if (!m_cond.wait(&m_mutex, 30000UL))
+    {
+      m_failed = true;
+      break;
+    }
+  }
+  return m_buf.size();
+}
+
+qint64 CdnStream::read(qint64 pos, char *dst, qint64 len)
+{
+  if (pos < 0 || len <= 0)
+  {
+    return 0;
+  }
+  QMutexLocker l(&m_mutex);
+  qint64 want = len;
+  if (m_total >= 0)
+  {
+    want = qMin(len, m_total - pos);
+    if (want <= 0)
+    {
+      return 0;
+    }
+  }
+  while (m_buf.size() < pos + want && !m_finished)
+  {
+    if (!m_cond.wait(&m_mutex, 30000UL))
+    {
+      m_failed = true;
+      break;
+    }
+  }
+  const qint64 avail = qMax<qint64>(0, qMin<qint64>(len, m_buf.size() - pos));
+  if (avail == 0 && m_failed)
+  {
+    return -1;
+  }
+  memcpy(dst, m_buf.constData() + pos, size_t(avail));
+  return avail;
+}
+
+void CdnStream::cancel()
+{
+  {
+    QMutexLocker l(&m_mutex);
+    if (m_finished || m_cancelled)
+    {
+      return;
+    }
+    m_cancelled = true;
+  }
+  auto self = shared_from_this();
+  Net::get().post([self] {
+    hang_up(qobject_cast<QNetworkReply *>(self->reply.data()));
+  });
+}
+
+std::shared_ptr<CdnStream> cdn_open_stream(const QUrl &url)
+{
+  auto s = std::make_shared<CdnStream>();
+  s->url = url;
+  QByteArray cached;
+  if (ram_lookup(url, &cached))
+  {
+    s->completeFrom(cached);
+    return s;
+  }
+  const int known = cached_status(url);
+  if (known != -1 && known != 200)
+  {
+    s->failWith(known); // recently answered 404 / failed: don't ask the network again yet
+    return s;
+  }
+  Net::get().post([s, url] {
+    Net &n = Net::get();
+    QNetworkReply *r = n.nam->get(make_request(url, 20000));
+    s->reply = r;
+    QObject::connect(r, &QNetworkReply::metaDataChanged, n.ctx, [s, r] {
+      const int st = status_of(r);
+      if (st == 0 || (st >= 300 && st < 400))
+      {
+        return; // not the final response yet
+      }
+      const QVariant len = r->header(QNetworkRequest::ContentLengthHeader);
+      s->onHeaders(st, len.isValid() ? len.toLongLong() : -1);
+    });
+    QObject::connect(r, &QNetworkReply::readyRead, n.ctx, [s, r] { s->onData(r->readAll()); });
+    QObject::connect(r, &QNetworkReply::finished, n.ctx, [s, r] {
+      if (r->isOpen())
+      {
+        s->onData(r->readAll()); // an aborted reply is closed and has nothing left to read
+      }
+      s->onFinished(r->error() == QNetworkReply::NoError);
+      r->deleteLater();
+    });
+  });
+  return s;
+}
+
+bool cdn_exists(const QUrl &url)
+{
+  return probe_batch({url}, false).value(0) == 200;
 }
 
 QString CdnCharacters::toVirtualPath(const QUrl &url)
@@ -489,29 +917,70 @@ QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::functi
     {
       return bases;
     }
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_discover_miss.contains(key) && now - m_discover_miss.value(key) < kMissTtlMs)
+    if (QDateTime::currentMSecsSinceEpoch() < m_discover_miss.value(key, 0))
     {
       return {};
     }
   }
-  QList<QUrl> found;
-  for (const QString &src : sources())
-  {
-    for (const QString &variant : QStringList{name} + caseVariants(name))
+  // Ask every source about the character at the same time (exact spelling first, then
+  // case variants only for sources that had no exact match): one round trip, not one per guess.
+  const QStringList srcs = sources();
+  QHash<int, QUrl> got;
+  bool transport_error = false;
+  auto discover = [&](bool variants) {
+    QList<QUrl> cand;
+    QList<QUrl> cand_base;
+    QList<int> owner;
+    for (int si = 0; si < srcs.size(); ++si)
     {
-      const QUrl base = QUrl(src + "characters/" + enc_path(variant) + "/");
-      if (cdn_exists(QUrl(base.toString() + "char.ini")))
+      if (got.contains(si))
       {
-        found << base;
-        break;
+        continue;
       }
+      for (const QString &v : variants ? caseVariants(name) : QStringList{name})
+      {
+        const QUrl base = QUrl(srcs[si] + "characters/" + enc_path(v) + "/");
+        cand << QUrl(base.toString() + "char.ini");
+        cand_base << base;
+        owner << si;
+      }
+    }
+    if (cand.isEmpty())
+    {
+      return;
+    }
+    const QVector<int> st = probe_batch(cand, false);
+    for (int i = 0; i < cand.size(); ++i)
+    {
+      if (st[i] != 200 && st[i] != 404)
+      {
+        transport_error = true;
+      }
+      if (st[i] == 200 && !got.contains(owner[i]))
+      {
+        got.insert(owner[i], cand_base[i]);
+      }
+    }
+  };
+  discover(false);
+  if (got.size() < srcs.size())
+  {
+    discover(true);
+  }
+  QList<QUrl> found;
+  for (int si = 0; si < srcs.size(); ++si)
+  {
+    if (got.contains(si))
+    {
+      found << got.value(si);
     }
   }
   QMutexLocker lock(&m_mutex);
   if (found.isEmpty())
   {
-    m_discover_miss.insert(key, QDateTime::currentMSecsSinceEpoch());
+    // A real 404 is remembered for minutes; a timeout / refused connection only briefly,
+    // so one dropped packet no longer disables a character for five minutes.
+    m_discover_miss.insert(key, QDateTime::currentMSecsSinceEpoch() + (transport_error ? kErrorTtlMs : kNotFoundTtlMs));
   }
   else
   {
@@ -547,21 +1016,37 @@ QList<QUrl> CdnCharacters::soundRoots() const
 
 QString CdnCharacters::probe(const QList<QUrl> &dirs, const QString &rel, const QStringList &suffixes)
 {
-  for (const QString &suffix : suffixes)
-  {
-    for (const QUrl &dir : dirs)
+  // All candidates of a wave are asked at once; list order (suffix, then folder) is the
+  // priority, exactly as before. Exact spelling is tried first, case variants only if nothing matched.
+  auto wave = [&](bool variants) -> QString {
+    QList<QUrl> cand;
+    for (const QString &suffix : suffixes)
     {
-      for (const QString &r : QStringList{rel + suffix} + caseVariants(rel + suffix))
+      for (const QUrl &dir : dirs)
       {
-        const QUrl url(dir.toString() + enc_path(r));
-        if (cdn_exists(url))
+        const QString full = rel + suffix;
+        for (const QString &r : variants ? caseVariants(full) : QStringList{full})
         {
-          return toVirtualPath(url);
+          cand << QUrl(dir.toString() + enc_path(r));
         }
       }
     }
-  }
-  return QString();
+    if (cand.isEmpty())
+    {
+      return QString();
+    }
+    const QVector<int> st = probe_batch(cand, true);
+    for (int i = 0; i < cand.size(); ++i)
+    {
+      if (st[i] == 200)
+      {
+        return toVirtualPath(cand[i]);
+      }
+    }
+    return QString();
+  };
+  const QString hit = wave(false);
+  return hit.isEmpty() ? wave(true) : hit;
 }
 
 QString CdnCharacters::resolve(const QString &vpath, const QStringList &suffixes, const std::function<bool(const QString &)> &is_local)
