@@ -13,13 +13,14 @@ class CdnFileEngine : public QAbstractFileEngine
 {
 public:
   explicit CdnFileEngine(const QString &path) { setFileName(path); }
+  ~CdnFileEngine() override { releaseStream(); }
 
   void setFileName(const QString &file) override
   {
+    releaseStream();
     m_path = file;
     m_valid = CdnCharacters::fromVirtualPath(file, &m_url);
     m_open = false;
-    m_data.clear();
     m_pos = 0;
   }
 
@@ -29,28 +30,35 @@ public:
     {
       return false;
     }
-    bool ok = false;
-    m_data = cdn_fetch(m_url, &ok);
-    m_open = ok;
+    // Start streaming and return as soon as the server has answered. The body keeps
+    // arriving in the background and read() hands it out as it comes in.
+    releaseStream();
+    m_stream = cdn_open_stream(m_url);
+    m_open = m_stream->waitOpen();
+    if (!m_open)
+    {
+      releaseStream();
+    }
     m_pos = 0;
-    return ok;
+    return m_open;
   }
 
   bool close() override
   {
     m_open = false;
-    m_data.clear();
+    releaseStream();
     return true;
   }
 
   bool flush() override { return true; }
   bool syncToDisk() override { return true; }
-  qint64 size() const override { return m_open ? m_data.size() : 0; }
+  qint64 size() const override { return m_open ? m_stream->size() : 0; }
   qint64 pos() const override { return m_pos; }
 
   bool seek(qint64 pos) override
   {
-    if (!m_open || pos < 0 || pos > m_data.size())
+    // Seeking ahead of what has arrived is fine: the next read waits for those bytes.
+    if (!m_open || pos < 0)
     {
       return false;
     }
@@ -68,13 +76,11 @@ public:
     {
       return -1;
     }
-    const qint64 n = qMin<qint64>(maxlen, m_data.size() - m_pos);
-    if (n <= 0)
+    const qint64 n = m_stream->read(m_pos, data, maxlen);
+    if (n > 0)
     {
-      return 0;
+      m_pos += n;
     }
-    memcpy(data, m_data.constData() + m_pos, size_t(n));
-    m_pos += n;
     return n;
   }
 
@@ -108,9 +114,18 @@ public:
   QByteArray id() const override { return m_path.toUtf8(); }
 
 private:
+  void releaseStream()
+  {
+    if (m_stream)
+    {
+      m_stream->cancel(); // no-op when the transfer already finished
+      m_stream.reset();
+    }
+  }
+
   QString m_path;
   QUrl m_url;
-  QByteArray m_data;
+  std::shared_ptr<CdnStream> m_stream;
   qint64 m_pos = 0;
   bool m_valid = false;
   bool m_open = false;
