@@ -426,7 +426,13 @@ QString AOApplication::get_real_path(const VPath &vpath, const QStringList &suff
   if (!in_cdn_lookup)
   {
     in_cdn_lookup = true;
-    const QString cdn_path = CdnCharacters::instance().resolve(vpath.toQString(), suffixes, [this](const QString &name) { return !get_real_path(VPath("characters/" + name + "/char.ini"), {""}).isEmpty(); });
+    const QString cdn_path = CdnCharacters::instance().resolve(vpath.toQString(), suffixes, [this](const QString &name) {
+      // "Is this character installed locally?" A previously resolved CDN char.ini sits in the
+      // lookup cache as a cdnfs: path; counting that as local made every later asset of a CDN
+      // character skip the CDN entirely.
+      const QString ini = get_real_path(VPath("characters/" + name + "/char.ini"), {""});
+      return !ini.isEmpty() && !ini.startsWith("cdnfs:/");
+    });
     in_cdn_lookup = false;
     if (!cdn_path.isEmpty())
     {
