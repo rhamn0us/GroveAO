@@ -2,13 +2,17 @@
 
 #include <QHash>
 #include <QList>
+#include <QByteArray>
 #include <QMutex>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
+#include <QWaitCondition>
 
 #include <functional>
+#include <memory>
 
 class CdnCharacters : public QObject
 {
@@ -58,7 +62,45 @@ private:
   QHash<QString, qint64> m_discover_miss;
 };
 
+// A CDN file being streamed. Bytes become readable the moment they arrive; nothing is
+// written to disk and nothing waits for the whole file. All consumer methods are safe from
+// any thread and block on a condition variable (never a nested event loop, so a call from
+// the GUI thread cannot re-enter application code).
+class CdnStream : public std::enable_shared_from_this<CdnStream>
+{
+public:
+  // Blocks until the response headers arrive. True only for HTTP 200.
+  bool waitOpen();
+  // Content-Length when the server sent one, otherwise blocks until the transfer ends.
+  qint64 size();
+  // Copies up to len bytes starting at pos. Blocks only until those bytes (or EOF) have
+  // arrived. Returns bytes copied, 0 at EOF, -1 if the transfer failed with nothing to give.
+  qint64 read(qint64 pos, char *dst, qint64 len);
+  // No more data needed: abort the transfer if it is still running.
+  void cancel();
+
+  // --- network thread side (not for RAIDERS) ---
+  QUrl url;
+  QPointer<QObject> reply;
+  void onHeaders(int status, qint64 length);
+  void onData(const QByteArray &data);
+  void onFinished(bool ok);
+  void completeFrom(const QByteArray &body);
+  void failWith(int status);
+
+private:
+  QMutex m_mutex;
+  QWaitCondition m_cond;
+  QByteArray m_buf;
+  int m_status = 0;
+  qint64 m_total = -1;
+  bool m_headers = false;
+  bool m_finished = false;
+  bool m_failed = false;
+  bool m_cancelled = false;
+};
+
 bool cdn_exists(const QUrl &url);
-QByteArray cdn_fetch(const QUrl &url, bool *ok);
+std::shared_ptr<CdnStream> cdn_open_stream(const QUrl &url);
 
 void cdn_install_file_engine();
