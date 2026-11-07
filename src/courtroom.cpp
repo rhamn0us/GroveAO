@@ -37,6 +37,9 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   sfx_delay_timer = new QTimer(this);
   sfx_delay_timer->setSingleShot(true);
 
+  m_pose_send_timer = new QTimer(this);
+  m_pose_send_timer->setSingleShot(true);
+
   music_player = new AOMusicPlayer(ao_app);
   music_player->setMuted(true);
   connect(&music_player->m_watcher, &QFutureWatcher<QString>::finished, this, &Courtroom::update_ui_music_name, Qt::QueuedConnection);
@@ -445,6 +448,8 @@ Courtroom::Courtroom(AOApplication *p_ao_app)
   connect(text_queue_timer, &QTimer::timeout, this, &Courtroom::chatmessage_dequeue);
 
   connect(sfx_delay_timer, &QTimer::timeout, this, &Courtroom::play_sfx);
+
+  connect(m_pose_send_timer, &QTimer::timeout, this, &Courtroom::send_next_pose_segment);
 
   connect(chat_tick_timer, &QTimer::timeout, this, &Courtroom::chat_tick);
 
@@ -2092,8 +2097,69 @@ void Courtroom::on_chat_return_pressed()
     return;
   }
 
+  // The parts of an earlier <pose:N> message are still going out
+  if (m_pose_send_active)
+  {
+    return;
+  }
+
   ui_ic_chat_message->blockSignals(true);
   QTimer::singleShot(Options::getInstance().chatRateLimit(), this, [this] { ui_ic_chat_message->blockSignals(false); });
+
+  const QString f_text = ui_ic_chat_message->text();
+
+  // No tags, nothing special to do
+  if (PoseTags::extract(f_text).tags.isEmpty())
+  {
+    send_ic_message(f_text, -1, false);
+    return;
+  }
+
+  // Cut the message at its <pose:N> tags. Tags for emotes the character doesn't have are removed without cutting.
+  QHash<int, bool> f_known_poses;
+  QVector<PoseTags::Segment> f_segments = PoseTags::split(f_text, [this, &f_known_poses](int p_pose) {
+    if (!f_known_poses.contains(p_pose))
+    {
+      f_known_poses.insert(p_pose, pose_exists(current_char, p_pose));
+    }
+    return f_known_poses.value(p_pose);
+  });
+
+  // Nothing but tags: it's a blankpost
+  if (f_segments.isEmpty())
+  {
+    f_segments.append(PoseTags::Segment());
+  }
+
+  // Without additive messages the parts couldn't flow into the same chatbox, so it goes out as one message
+  if (f_segments.size() > 1 && !ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::ADDITIVE))
+  {
+    PoseTags::Segment f_joined = f_segments.first();
+    for (int i = 1; i < f_segments.size(); ++i)
+    {
+      f_joined.text += f_segments.at(i).text;
+    }
+    f_segments = {f_joined};
+  }
+
+  if (f_segments.size() == 1)
+  {
+    const PoseTags::Segment &f_segment = f_segments.first();
+    send_ic_message(f_segment.text, f_segment.pose == PoseTags::Segment::NO_POSE ? -1 : f_segment.pose - 1, false);
+    return;
+  }
+
+  begin_pose_send(f_segments);
+}
+
+void Courtroom::send_ic_message(const QString &p_text, int p_pose_emote, bool p_follow_up)
+{
+  // The emote this message is sent with
+  const bool f_pose = p_pose_emote >= 0;
+  const int f_emote_index = f_pose ? p_pose_emote : current_emote;
+  // One-shot things aren't repeated on the follow-up parts of a message
+  const QString f_effect = p_follow_up ? QString() : effect;
+
   // MS#
   // deskmod#
   // pre-emote#
@@ -2120,13 +2186,13 @@ void Courtroom::on_chat_return_pressed()
 
   QStringList packet_contents;
   // have to fetch this early for a workaround. i hate this system, but i am stuck with it for now
-  int f_emote_mod = ao_app->get_emote_mod(current_char, current_emote);
+  int f_emote_mod = ao_app->get_emote_mod(current_char, f_emote_index);
 
   int f_desk_mod = DESK_SHOW;
 
   if (ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::DESKMOD))
   {
-    f_desk_mod = ao_app->get_desk_mod(current_char, current_emote);
+    f_desk_mod = ao_app->get_desk_mod(current_char, f_emote_index);
     {}
     if (!ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::EXPANDED_DESK_MODS))
     {
@@ -2151,7 +2217,7 @@ void Courtroom::on_chat_return_pressed()
 
   packet_contents.append(QString::number(f_desk_mod));
 
-  QString f_pre = ao_app->get_pre_emote(current_char, current_emote);
+  QString f_pre = ao_app->get_pre_emote(current_char, f_emote_index);
   QString f_sfx = "1";
   int f_sfx_delay = get_char_sfx_delay();
 
@@ -2171,57 +2237,101 @@ void Courtroom::on_chat_return_pressed()
   {
     f_emote_mod = ZOOM;
   }
-  // If we have "pre" on, and immediate is not checked
-  if (ui_pre->isChecked() && !ui_immediate->isChecked())
+  if (f_pose)
   {
-    // Turn idle into preanim
-    if (f_emote_mod == IDLE)
+    // A <pose:N> part always plays its pose's own preanim and sound, whatever the PRE and sound controls are set to
+    QString f_pose_sfx = ao_app->get_sfx_name(current_char, f_emote_index);
+    if (f_pose_sfx.isEmpty() || f_pose_sfx == "0" || f_pose_sfx == "-")
     {
-      f_emote_mod = PREANIM;
+      f_pose_sfx = "1";
     }
-    // Turn zoom into preanim zoom
-    else if (f_emote_mod == ZOOM && ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::PREZOOM))
+    const bool f_has_pre = !f_pre.isEmpty() && f_pre != "-";
+
+    f_sfx = f_pose_sfx;
+    f_sfx_delay = ao_app->get_sfx_delay(current_char, f_emote_index);
+
+    // The sound is only played together with a preanim, so a pose that only has a sound needs the preanim modifier too
+    if (f_has_pre || f_sfx != "1")
     {
-      f_emote_mod = PREANIM_ZOOM;
+      if (f_emote_mod == IDLE)
+      {
+        f_emote_mod = PREANIM;
+      }
+      else if (f_emote_mod == ZOOM && ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::PREZOOM))
+      {
+        f_emote_mod = PREANIM_ZOOM;
+      }
     }
-    // Play the sfx
-    f_sfx = get_char_sfx();
+    else
+    {
+      if (f_emote_mod == PREANIM)
+      {
+        f_emote_mod = IDLE;
+      }
+      else if (f_emote_mod == PREANIM_ZOOM)
+      {
+        f_emote_mod = ZOOM;
+      }
+    }
+    if (!f_has_pre)
+    {
+      f_pre = "";
+    }
   }
-  // If we have "pre" off, or immediate is checked
   else
   {
-    // Turn preanim into idle
-    if (f_emote_mod == PREANIM)
+    // If we have "pre" on, and immediate is not checked
+    if (ui_pre->isChecked() && !ui_immediate->isChecked())
     {
-      f_emote_mod = IDLE;
-    }
-    // Turn preanim zoom into zoom
-    else if (f_emote_mod == PREANIM_ZOOM)
-    {
-      f_emote_mod = ZOOM;
-    }
-
-    // Play the sfx if pre is checked
-    if (ui_pre->isChecked())
-    {
+      // Turn idle into preanim
+      if (f_emote_mod == IDLE)
+      {
+        f_emote_mod = PREANIM;
+      }
+      // Turn zoom into preanim zoom
+      else if (f_emote_mod == ZOOM && ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::PREZOOM))
+      {
+        f_emote_mod = PREANIM_ZOOM;
+      }
+      // Play the sfx
       f_sfx = get_char_sfx();
     }
-  }
-
-  // Custom sfx override via sound list dropdown.
-  if (!custom_sfx.isEmpty() || ui_sfx_dropdown->currentIndex() != 0)
-  {
-    f_sfx = get_char_sfx();
-    // We have a custom sfx but we're on idle emotes.
-    // Turn them into pre so the sound plays if client setting sfx_on_idle is enabled.
-    if (Options::getInstance().playSelectedSFXOnIdle() && (f_emote_mod == IDLE || f_emote_mod == ZOOM))
+    // If we have "pre" off, or immediate is checked
+    else
     {
-      // We turn idle into preanim, but make it not send a pre animation
-      f_pre = "";
-      // Set sfx delay to 0 so the sfx plays immediately
-      f_sfx_delay = 0;
-      // Set the emote mod to preanim so the sound plays
-      f_emote_mod = f_emote_mod == IDLE ? PREANIM : PREANIM_ZOOM;
+      // Turn preanim into idle
+      if (f_emote_mod == PREANIM)
+      {
+        f_emote_mod = IDLE;
+      }
+      // Turn preanim zoom into zoom
+      else if (f_emote_mod == PREANIM_ZOOM)
+      {
+        f_emote_mod = ZOOM;
+      }
+
+      // Play the sfx if pre is checked
+      if (ui_pre->isChecked())
+      {
+        f_sfx = get_char_sfx();
+      }
+    }
+
+    // Custom sfx override via sound list dropdown.
+    if (!custom_sfx.isEmpty() || ui_sfx_dropdown->currentIndex() != 0)
+    {
+      f_sfx = get_char_sfx();
+      // We have a custom sfx but we're on idle emotes.
+      // Turn them into pre so the sound plays if client setting sfx_on_idle is enabled.
+      if (Options::getInstance().playSelectedSFXOnIdle() && (f_emote_mod == IDLE || f_emote_mod == ZOOM))
+      {
+        // We turn idle into preanim, but make it not send a pre animation
+        f_pre = "";
+        // Set sfx delay to 0 so the sfx plays immediately
+        f_sfx_delay = 0;
+        // Set the emote mod to preanim so the sound plays
+        f_emote_mod = f_emote_mod == IDLE ? PREANIM : PREANIM_ZOOM;
+      }
     }
   }
 
@@ -2229,9 +2339,9 @@ void Courtroom::on_chat_return_pressed()
 
   packet_contents.append(current_char);
 
-  packet_contents.append(ao_app->get_emote(current_char, current_emote));
+  packet_contents.append(ao_app->get_emote(current_char, f_emote_index));
 
-  packet_contents.append(ui_ic_chat_message->text());
+  packet_contents.append(p_text);
 
   packet_contents.append(current_or_default_side());
 
@@ -2243,7 +2353,11 @@ void Courtroom::on_chat_return_pressed()
 
   QString f_obj_state;
 
-  if ((objection_state == 4 && !ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::CUSTOMOBJECTIONS)) || (objection_state < 0))
+  if (p_follow_up)
+  {
+    f_obj_state = "0";
+  }
+  else if ((objection_state == 4 && !ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::CUSTOMOBJECTIONS)) || (objection_state < 0))
   {
     f_obj_state = "0";
   }
@@ -2258,14 +2372,14 @@ void Courtroom::on_chat_return_pressed()
   }
 
   // We're doing an Objection (custom objections not yet supported)
-  if (objection_state == 2 && Options::getInstance().objectionStopMusic())
+  if (!p_follow_up && objection_state == 2 && Options::getInstance().objectionStopMusic())
   {
     music_stop(true);
   }
 
   packet_contents.append(f_obj_state);
 
-  if (is_presenting_evidence)
+  if (is_presenting_evidence && !p_follow_up)
   {
     // the evidence index is shifted by 1 because 0 is no evidence per legacy
     // standards besides, older clients crash if we pass -1
@@ -2296,7 +2410,7 @@ void Courtroom::on_chat_return_pressed()
 
   packet_contents.append(f_flip);
 
-  packet_contents.append(QString::number(realization_state));
+  packet_contents.append(p_follow_up ? QString("0") : QString::number(realization_state));
 
   QString f_text_color;
 
@@ -2326,7 +2440,7 @@ void Courtroom::on_chat_return_pressed()
     }
     else
     {
-      packet_contents.append(ao_app->get_showname(current_char, current_emote));
+      packet_contents.append(ao_app->get_showname(current_char, f_emote_index));
     }
 
     // Similarly, we send over whom we're paired with, unless we have chosen
@@ -2357,7 +2471,7 @@ void Courtroom::on_chat_return_pressed()
     }
 
     // Finally, we send over if we want our pres to not interrupt.
-    if (ui_immediate->isChecked() && ui_pre->isChecked())
+    if (ui_immediate->isChecked() && (f_pose || ui_pre->isChecked()))
     {
       packet_contents.append("1");
     }
@@ -2371,42 +2485,23 @@ void Courtroom::on_chat_return_pressed()
   // emote uses it.
   if (ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::LOOPING_SFX))
   {
-    packet_contents.append(ao_app->get_sfx_looping(current_char, current_emote));
-    packet_contents.append(QString::number(screenshake_state));
+    packet_contents.append(ao_app->get_sfx_looping(current_char, f_emote_index));
+    packet_contents.append(p_follow_up ? QString("0") : QString::number(screenshake_state));
 
-    QString pre_emote = ao_app->get_pre_emote(current_char, current_emote);
-    QString emote = ao_app->get_emote(current_char, current_emote);
-    QStringList emotes_to_check = {pre_emote, "(b)" + emote, "(a)" + emote};
-    QStringList effects_to_check = {"_FrameScreenshake", "_FrameRealization", "_FrameSFX"};
-
-    foreach (QString f_effect, effects_to_check)
+    for (const QString &f_frame_effect : {QStringLiteral("_FrameScreenshake"), QStringLiteral("_FrameRealization"), QStringLiteral("_FrameSFX")})
     {
-      QString packet;
-      foreach (QString f_emote, emotes_to_check)
-      {
-        packet += f_emote;
-        if (Options::getInstance().networkedFrameSfxEnabled())
-        {
-          QString sfx_frames = ao_app->read_ini_tags(ao_app->get_character_path(current_char, "char.ini"), f_emote.append(f_effect)).join("|");
-          if (sfx_frames != "")
-          {
-            packet += "|" + sfx_frames;
-          }
-        }
-        packet += "^";
-      }
-      packet_contents.append(packet);
+      packet_contents.append(build_frame_effect_netstring(current_char, f_emote_index, f_frame_effect));
     }
   }
 
   if (ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::ADDITIVE))
   {
-    packet_contents.append(ui_additive->isChecked() ? "1" : "0");
+    packet_contents.append(p_follow_up || ui_additive->isChecked() ? "1" : "0");
   }
   if (ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::EFFECTS))
   {
     QString p_effect_folder = ao_app->read_char_ini(current_char, "effects", "Options");
-    QString fx_sound = ao_app->get_effect_property(effect, current_char, p_effect_folder, "sound");
+    QString fx_sound = ao_app->get_effect_property(f_effect, current_char, p_effect_folder, "sound");
 
     // Don't overlap the two sfx
     if (!ui_pre->isChecked() && (!custom_sfx.isEmpty() || ui_sfx_dropdown->currentIndex() == 1))
@@ -2414,12 +2509,12 @@ void Courtroom::on_chat_return_pressed()
       fx_sound = "0";
     }
 
-    packet_contents.append(effect + "|" + p_effect_folder + "|" + fx_sound);
+    packet_contents.append(f_effect + "|" + p_effect_folder + "|" + fx_sound);
   }
 
   if (ao_app->m_serverdata.get_feature(server::BASE_FEATURE_SET::CUSTOM_BLIPS))
   {
-    packet_contents.append(ao_app->get_blipname(current_char, current_emote));
+    packet_contents.append(ao_app->get_blipname(current_char, f_emote_index));
 
     packet_contents.append(ui_slide_enable->isChecked() ? "1" : "0"); // just let the server figure out what to do with this
   }
@@ -2429,6 +2524,12 @@ void Courtroom::on_chat_return_pressed()
 
 void Courtroom::reset_ui()
 {
+  // A later part of a <pose:N> message is being sent, keep what the player has started typing next
+  if (is_follow_up_in_flight())
+  {
+    return;
+  }
+
   ui_ic_chat_message->clear();
   if (ui_additive->isChecked())
   {
@@ -2496,6 +2597,18 @@ void Courtroom::chatmessage_enqueue(QStringList p_contents)
     return;
   }
 
+  // Cut <pose:N> tags out of the text before it is logged or displayed. Their positions travel along in the packet.
+  {
+    const PoseTags::ExtractResult f_poses = PoseTags::extract(p_contents[MESSAGE]);
+    p_contents[MESSAGE] = f_poses.text;
+    // The server doesn't get to decide what goes in this field
+    while (p_contents.size() <= POSE_TAGS)
+    {
+      p_contents.append(QString());
+    }
+    p_contents[POSE_TAGS] = PoseTags::serialize(f_poses.tags);
+  }
+
   // Use null showname if packet does not support 2.6+ extensions
   QString showname = QString();
   if (SHOWNAME < p_contents.size())
@@ -2521,6 +2634,13 @@ void Courtroom::chatmessage_enqueue(QStringList p_contents)
   {
     // Reset input UI elements, clear input box, etc.
     reset_ui();
+
+    // Our part of a <pose:N> message came back, now wait for it to finish playing
+    if (m_pose_send_active && !m_pose_send_echo_queued)
+    {
+      m_pose_send_echo_queued = true;
+      m_pose_send_timer->start(POSE_SEND_PLAYBACK_TIMEOUT);
+    }
   }
   // If we determine we sent this message, or we have desync enabled
   if (sender || Options::getInstance().desynchronisedLogsEnabled())
@@ -2605,6 +2725,18 @@ void Courtroom::unpack_chatmessage(QStringList p_contents)
     {
       m_chatmessage[n_string] = "";
     }
+  }
+
+  // The tags aren't part of the packet, they were put there by chatmessage_enqueue()
+  m_chatmessage[POSE_TAGS] = p_contents.value(POSE_TAGS);
+  m_pose_tags = PoseTags::deserialize(m_chatmessage[POSE_TAGS]);
+  m_pose_tag_index = 0;
+  ++m_chatmessage_serial;
+
+  // Our own part of a <pose:N> message started playing
+  if (m_pose_send_active && m_pose_send_echo_queued && m_chatmessage[CHAR_ID].toInt() == m_cid)
+  {
+    m_pose_send_echo_playing = true;
   }
 
   // if the char ID matches our client's char ID (most likely, this is our message coming back to us)
@@ -4303,6 +4435,7 @@ void Courtroom::start_chat_ticking()
   {
     // since the message is empty, it's technically done ticking
     text_state = 2;
+    pose_send_message_finished();
     if (m_chatmessage[ADDITIVE] == "1")
     {
       // Cool behavior
@@ -4389,9 +4522,16 @@ void Courtroom::chat_tick()
   // Due to our new text speed system, we always need to stop the timer now.
   chat_tick_timer->stop();
 
+  // Swap the pose if we reached a <pose:N> tag
+  if (m_pose_tag_index < m_pose_tags.size())
+  {
+    apply_pose_changes(tick_pos);
+  }
+
   if (tick_pos >= f_message.size())
   {
     text_state = 2;
+    pose_send_message_finished();
     // Check if we're a narrator msg
     if (m_chatmessage[EMOTE] != "")
     {
@@ -4704,6 +4844,176 @@ void Courtroom::chat_tick()
     // Continue ticking
     chat_tick_timer->start(msg_delay);
   }
+}
+
+QString Courtroom::build_frame_effect_netstring(const QString &p_char, int p_emote, const QString &p_effect)
+{
+  const QString pre_emote = ao_app->get_pre_emote(p_char, p_emote);
+  const QString emote = ao_app->get_emote(p_char, p_emote);
+  const QStringList emotes_to_check = {pre_emote, "(b)" + emote, "(a)" + emote};
+
+  QString packet;
+  for (const QString &f_emote : emotes_to_check)
+  {
+    packet += f_emote;
+    if (Options::getInstance().networkedFrameSfxEnabled())
+    {
+      QString sfx_frames = ao_app->read_ini_tags(ao_app->get_character_path(p_char, "char.ini"), f_emote + p_effect).join("|");
+      if (sfx_frames != "")
+      {
+        packet += "|" + sfx_frames;
+      }
+    }
+    packet += "^";
+  }
+  return packet;
+}
+
+bool Courtroom::pose_exists(const QString &p_char, int p_pose)
+{
+  if (p_char.isEmpty() || p_pose < 1)
+  {
+    return false;
+  }
+  // Same requirement get_emote() and its siblings have for an emote line
+  return ao_app->read_char_ini(p_char, QString::number(p_pose), "Emotions").split("#").size() >= 4;
+}
+
+void Courtroom::begin_pose_send(const QVector<PoseTags::Segment> &p_segments)
+{
+  m_pose_send_active = true;
+  m_pose_send_index = 0;
+  m_pose_send_cid = m_cid;
+  m_pose_send_char = current_char;
+  m_pose_send_echo_queued = false;
+  m_pose_send_echo_playing = false;
+  m_pose_send_pending.clear();
+  for (int i = 1; i < p_segments.size(); ++i)
+  {
+    m_pose_send_pending.enqueue(p_segments.at(i));
+  }
+
+  const PoseTags::Segment &f_first = p_segments.first();
+  send_ic_message(f_first.text, f_first.pose == PoseTags::Segment::NO_POSE ? -1 : f_first.pose - 1, false);
+
+  // If the server never echoes this back we still go on
+  m_pose_send_timer->start(POSE_SEND_ECHO_TIMEOUT);
+}
+
+bool Courtroom::is_follow_up_in_flight() const
+{
+  return m_pose_send_active && m_pose_send_index > 0;
+}
+
+void Courtroom::pose_send_message_finished()
+{
+  // Only our own part that we have been waiting for counts
+  if (!m_pose_send_active || !m_pose_send_echo_playing || m_chatmessage[CHAR_ID].toInt() != m_cid)
+  {
+    return;
+  }
+  m_pose_send_echo_playing = false;
+  m_pose_send_echo_queued = false;
+
+  // Send the next part in a moment, or wrap up if that was the last one
+  m_pose_send_timer->start(m_pose_send_pending.isEmpty() ? 0 : 100);
+}
+
+void Courtroom::send_next_pose_segment()
+{
+  m_pose_send_timer->stop();
+  if (!m_pose_send_active)
+  {
+    return;
+  }
+
+  // Done, or the player left or switched characters in the meantime
+  if (m_pose_send_pending.isEmpty() || m_cid != m_pose_send_cid || current_char != m_pose_send_char)
+  {
+    m_pose_send_active = false;
+    m_pose_send_index = 0;
+    m_pose_send_pending.clear();
+    m_pose_send_echo_queued = false;
+    m_pose_send_echo_playing = false;
+    return;
+  }
+
+  const PoseTags::Segment f_segment = m_pose_send_pending.dequeue();
+  ++m_pose_send_index;
+  m_pose_send_echo_queued = false;
+  m_pose_send_echo_playing = false;
+  send_ic_message(f_segment.text, f_segment.pose == PoseTags::Segment::NO_POSE ? -1 : f_segment.pose - 1, true);
+  m_pose_send_timer->start(POSE_SEND_ECHO_TIMEOUT);
+}
+
+void Courtroom::apply_pose_changes(int p_revealed)
+{
+  while (m_pose_tag_index < m_pose_tags.size() && m_pose_tags.at(m_pose_tag_index).at <= p_revealed)
+  {
+    apply_pose_change(m_pose_tags.at(m_pose_tag_index).pose);
+    ++m_pose_tag_index;
+  }
+}
+
+void Courtroom::apply_pose_change(int p_pose)
+{
+  const QString f_char = m_chatmessage[CHAR_NAME];
+  // Narrators have no pose, and tags for emotes the character doesn't have are ignored
+  if (f_char.isEmpty() || m_chatmessage[EMOTE].isEmpty() || !pose_exists(f_char, p_pose))
+  {
+    return;
+  }
+
+  const int f_index = p_pose - 1;
+  const QString f_emote = ao_app->get_emote(f_char, f_index);
+  const QString f_pre = ao_app->get_pre_emote(f_char, f_index);
+  m_chatmessage[EMOTE] = f_emote;
+  m_chatmessage[PRE_EMOTE] = f_pre;
+
+  // The frame effects of the old sprite no longer apply, the new pose brings its own
+  m_chatmessage[FRAME_SCREENSHAKE] = build_frame_effect_netstring(f_char, f_index, "_FrameScreenshake");
+  m_chatmessage[FRAME_REALIZATION] = build_frame_effect_netstring(f_char, f_index, "_FrameRealization");
+  m_chatmessage[FRAME_SFX] = build_frame_effect_netstring(f_char, f_index, "_FrameSFX");
+  if (Options::getInstance().networkedFrameSfxEnabled())
+  {
+    ui_vp_player_char->setFrameEffects({m_chatmessage[FRAME_SCREENSHAKE], m_chatmessage[FRAME_REALIZATION], m_chatmessage[FRAME_SFX]});
+  }
+  else
+  {
+    ui_vp_player_char->setFrameEffects(QStringList());
+  }
+
+  // The pose's own sound
+  const QString f_sfx = ao_app->get_sfx_name(f_char, f_index);
+  if (!f_sfx.isEmpty() && f_sfx != "0" && f_sfx != "1" && f_sfx != "-")
+  {
+    const quint32 f_serial = m_chatmessage_serial;
+    QTimer::singleShot(ao_app->get_sfx_delay(f_char, f_index) * time_mod, this, [this, f_serial, f_sfx] {
+      // a newer message took over in the meantime
+      if (f_serial == m_chatmessage_serial)
+      {
+        sfx_player->findAndPlaySfx(f_sfx);
+      }
+    });
+  }
+
+  // The pose's preanim plays next to the text, the talking sprite takes over when it's over (see preanim_done())
+  const bool f_has_pre = !f_pre.isEmpty() && f_pre != "-" && file_exists(ao_app->get_image_suffix(ao_app->get_character_path(f_char, f_pre)));
+  if (f_has_pre)
+  {
+    anim_state = 4;
+    ui_vp_player_char->loadCharacterEmote(f_char, f_pre, kal::CharacterAnimationLayer::PreEmote, ao_app->get_preanim_duration(f_char, f_pre));
+    ui_vp_player_char->setPlayOnce(true);
+    ui_vp_player_char->startPlayback();
+    return;
+  }
+
+  // No preanim, straight to the new sprite
+  const bool f_talking = color_is_talking && text_state == 1;
+  anim_state = f_talking ? 2 : 3;
+  ui_vp_player_char->loadCharacterEmote(f_char, f_emote, f_talking ? kal::CharacterAnimationLayer::TalkEmote : kal::CharacterAnimationLayer::IdleEmote);
+  ui_vp_player_char->setPlayOnce(false);
+  ui_vp_player_char->startPlayback();
 }
 
 void Courtroom::play_sfx()
