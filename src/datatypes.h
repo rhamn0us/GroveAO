@@ -70,6 +70,8 @@ enum CHAT_MESSAGE
   EFFECTS,
   BLIPNAME,
   SLIDE,
+  // Not part of the packet. The client puts the <pose:N> tags it cut out of the message here (see posetags.h).
+  POSE_TAGS,
 };
 
 enum EMOTE_MOD_TYPE
