@@ -17,9 +17,9 @@
 
 #include <atomic>
 
-static const qint64 kNotFoundTtlMs = 5 * 60 * 1000; // a real 404
-static const qint64 kErrorTtlMs = 15 * 1000;        // timeouts, refused connections, 5xx: retry soon
-static const qint64 kRamBudget = 64LL * 1024 * 1024;  // finished small files only, RAM only, never disk
+static const qint64 kNotFoundTtlMs = 5 * 60 * 1000;  // a real 404
+static const qint64 kErrorTtlMs = 15 * 1000;         // timeouts, refused connections, 5xx: retry soon
+static const qint64 kRamBudget = 64LL * 1024 * 1024; // finished small files only, RAM only, never disk
 static const qint64 kRamMaxItem = 16LL * 1024 * 1024;
 static const qint64 kMaxStreamBytes = 512LL * 1024 * 1024; // sanity cap for a single stream
 
@@ -149,7 +149,8 @@ struct Net
     ctx = new QObject;
     ctx->moveToThread(&thread);
     thread.start();
-    QMetaObject::invokeMethod(ctx, [this] { nam = new QNetworkAccessManager(ctx); }, Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(
+        ctx, [this] { nam = new QNetworkAccessManager(ctx); }, Qt::BlockingQueuedConnection);
   }
 
   template <class F>
@@ -194,7 +195,7 @@ struct Batch
 {
   QMutex m;
   QWaitCondition cv;
-  QVector<int> st;                       // -1 = not answered yet
+  QVector<int> st;                          // -1 = not answered yet
   QVector<QPointer<QNetworkReply>> replies; // network thread only
   std::atomic<bool> cancel{false};
 };
@@ -276,7 +277,9 @@ QVector<int> probe_batch(const QList<QUrl> &urls, bool stop_at_first)
   }
 
   std::shared_ptr<Batch> b;
-  auto value = [&](int i) { return out[i] != -1 ? out[i] : (b ? b->st[i] : -1); };
+  auto value = [&](int i) {
+    return out[i] != -1 ? out[i] : (b ? b->st[i] : -1);
+  };
   auto decided = [&]() {
     for (int i = 0; i < n; ++i)
     {
@@ -511,9 +514,7 @@ void CdnStream::cancel()
     m_cancelled = true;
   }
   auto self = shared_from_this();
-  Net::get().post([self] {
-    hang_up(qobject_cast<QNetworkReply *>(self->reply.data()));
-  });
+  Net::get().post([self] { hang_up(qobject_cast<QNetworkReply *>(self->reply.data())); });
 }
 
 std::shared_ptr<CdnStream> cdn_open_stream(const QUrl &url)
