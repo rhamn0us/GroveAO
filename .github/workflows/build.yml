@@ -177,7 +177,7 @@ jobs:
   build-macos:
     name: macOS arm64
     needs: formatting-check
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@master
         with:
