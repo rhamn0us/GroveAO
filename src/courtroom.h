@@ -23,6 +23,7 @@
 #include "file_functions.h"
 #include "hardware_functions.h"
 #include "lobby.h"
+#include "posetags.h"
 #include "screenslidetimer.h"
 #include "scrolltext.h"
 #include "widgets/aooptionsdialog.h"
@@ -248,6 +249,36 @@ public:
   // Handle the emote modifier value and proceed through the logic accordingly.
   void handle_emote_mod(int emote_mod, bool p_immediate);
 
+  // <pose:N> support ------------------------------------------------------------------------------------------------
+  // A "<pose:N>" tag in an IC message swaps the speaker's pose to emote N of their char.ini in the middle of the text.
+  // Sending: the typed message is cut at its tags and every part goes out as its own (additive) IC message with that
+  // pose's emote, preanim, sound and frame effects. Every client understands these, patched or not.
+  // Receiving: tags that arrive inside a message (from clients that don't cut) are removed from the text before it is
+  // logged, and the pose is swapped as the typing animation reaches the position the tag was at.
+
+  // Sends one IC message with the current UI state.
+  // p_pose_emote is the 0-based emote index of a "<pose:N>" part of a message, or -1 for the emote that is selected.
+  // p_follow_up is true for the 2nd and later parts of a cut message. Those are additive and don't repeat the
+  // one-shot things of the first part (objection, evidence, realization, screenshake, effect).
+  void send_ic_message(const QString &p_text, int p_pose_emote, bool p_follow_up);
+
+  // Builds the networked frame effect string of one emote of a character, for p_effect "_FrameScreenshake", "_FrameRealization" or "_FrameSFX".
+  QString build_frame_effect_netstring(const QString &p_char, int p_emote, const QString &p_effect);
+
+  // Whether emote number p_pose (1-based, as in char.ini) exists for the character.
+  bool pose_exists(const QString &p_char, int p_pose);
+
+  // Starts sending a message that was cut into several parts. The first part goes out right away.
+  void begin_pose_send(const QVector<PoseTags::Segment> &p_segments);
+  // Called when our own echo has arrived and has been played, or when we gave up waiting for it.
+  void pose_send_message_finished();
+  // Whether a part after the first one of a cut message is currently being sent.
+  bool is_follow_up_in_flight() const;
+
+  // Fires every pose change of the playing message whose position in the text has been reached.
+  void apply_pose_changes(int p_revealed);
+  void apply_pose_change(int p_pose);
+
   // Initialize the chatbox image, showname shenanigans, custom chatboxes, etc.
   void initialize_chatbox();
 
@@ -468,9 +499,30 @@ private:
 
   // Minumum and maximum number of parameters in the MS packet
   static const int MS_MINIMUM = 15;
-  static const int MS_MAXIMUM = 32;
+  static const int MS_MAXIMUM = 33;
   QString m_chatmessage[MS_MAXIMUM];
   QString m_previous_chatmessage[MS_MAXIMUM];
+
+  // State of a <pose:N> message that is being sent as several IC messages
+  // How long we wait for the server to echo a part back to us, and for it to finish playing once it did
+  static const int POSE_SEND_ECHO_TIMEOUT = 3000;
+  static const int POSE_SEND_PLAYBACK_TIMEOUT = 60000;
+  bool m_pose_send_active = false;
+  // index of the part that was sent last
+  int m_pose_send_index = 0;
+  // the character the message was started with, if it changes the rest is dropped
+  int m_pose_send_cid = -1;
+  QString m_pose_send_char;
+  bool m_pose_send_echo_queued = false;
+  bool m_pose_send_echo_playing = false;
+  QQueue<PoseTags::Segment> m_pose_send_pending;
+  QTimer *m_pose_send_timer = nullptr;
+
+  // <pose:N> tags of the message that is playing, and the next one still to fire
+  QVector<PoseTags::PoseTag> m_pose_tags;
+  int m_pose_tag_index = 0;
+  // Counts up for every message that starts playing, so delayed things can tell they belong to an old one
+  quint32 m_chatmessage_serial = 0;
 
   QString additive_previous;
 
@@ -838,6 +890,7 @@ public Q_SLOTS:
 private Q_SLOTS:
   void start_chat_ticking();
   void play_sfx();
+  void send_next_pose_segment();
 
   void chat_tick();
 
