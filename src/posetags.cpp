@@ -18,7 +18,7 @@ ExtractResult extract(const QString &p_text)
 
     bool ok = false;
     const int pose = match.captured(1).toInt(&ok);
-    // A number too big for an int can't be a real emote, keep it as "invalid"
+    // A number too big for an integer can't be a real emote, keep it as fucking invalid
     result.tags.append({static_cast<int>(result.text.size()), ok ? pose : 0});
 
     last = match.capturedEnd();
