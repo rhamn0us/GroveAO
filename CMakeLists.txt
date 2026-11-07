@@ -96,6 +96,8 @@ qt_add_executable(AttorneyOnline
   src/options.h
   src/packet_distribution.cpp
   src/path_functions.cpp
+  src/posetags.cpp
+  src/posetags.h
   src/scrolltext.cpp
   src/scrolltext.h
   src/serverdata.cpp
