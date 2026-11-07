@@ -1,8 +1,8 @@
 #pragma once
 
+#include <QByteArray>
 #include <QHash>
 #include <QList>
-#include <QByteArray>
 #include <QMutex>
 #include <QObject>
 #include <QPointer>
