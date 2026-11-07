@@ -2,7 +2,9 @@
 
 #include "file_functions.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -12,6 +14,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSet>
 #include <QThread>
 #include <QVector>
 
@@ -21,6 +24,12 @@ static const qint64 kNotFoundTtlMs = 5 * 60 * 1000;  // a real 404
 static const qint64 kErrorTtlMs = 15 * 1000;         // timeouts, refused connections, 5xx: retry soon
 static const qint64 kRamBudget = 64LL * 1024 * 1024; // finished small files only, RAM only, never disk
 static const qint64 kRamMaxItem = 16LL * 1024 * 1024;
+// The GUI thread must never sit on the network for long: one probe batch may hold it for at most
+// kGuiWaitMs. After a timeout the probes keep running in the background (their answers land in the
+// shared memory below) and the GUI thread does not wait on the network at all for kGuiBackoffMs.
+static const qint64 kGuiWaitMs = 1500;
+static const qint64 kGuiBackoffMs = 10 * 1000;
+static std::atomic<qint64> g_gui_backoff_until{0};
 static const qint64 kMaxStreamBytes = 512LL * 1024 * 1024; // sanity cap for a single stream
 
 static bool allow_local_for_tests()
@@ -52,6 +61,7 @@ struct Ram
   qint64 bytes = 0;
   QHash<QUrl, Miss> misses;
   QHash<QUrl, bool> hits;
+  QSet<QUrl> inflight; // URLs a probe is currently asking about
 };
 
 Ram &ram()
@@ -116,6 +126,7 @@ void note_status(const QUrl &url, int status)
 {
   Ram &r = ram();
   QMutexLocker lock(&r.mutex);
+  r.inflight.remove(url);
   if (status == 200)
   {
     r.hits.insert(url, true);
@@ -124,6 +135,32 @@ void note_status(const QUrl &url, int status)
   }
   const bool definitive = (status == 404 || status == 410);
   r.misses.insert(url, Miss{QDateTime::currentMSecsSinceEpoch() + (definitive ? kNotFoundTtlMs : kErrorTtlMs), status});
+}
+
+// True when the caller should start a probe for this URL; false when one is already running.
+bool claim_probe(const QUrl &url)
+{
+  Ram &r = ram();
+  QMutexLocker lock(&r.mutex);
+  if (r.inflight.contains(url))
+  {
+    return false;
+  }
+  r.inflight.insert(url);
+  return true;
+}
+
+void release_probe(const QUrl &url)
+{
+  Ram &r = ram();
+  QMutexLocker lock(&r.mutex);
+  r.inflight.remove(url);
+}
+
+bool on_gui_thread()
+{
+  QCoreApplication *app = QCoreApplication::instance();
+  return app && QThread::currentThread() == app->thread();
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +241,7 @@ void batch_record(const std::shared_ptr<Batch> &b, int i, const QUrl &url, int s
 {
   if (b->cancel)
   {
+    release_probe(url);
     return; // we aborted it ourselves; that says nothing about the URL
   }
   {
@@ -223,6 +261,7 @@ void start_probe(const std::shared_ptr<Batch> &b, int i, const QUrl &url, bool u
 {
   if (b->cancel)
   {
+    release_probe(url);
     return;
   }
   Net &n = Net::get();
@@ -278,7 +317,16 @@ QVector<int> probe_batch(const QList<QUrl> &urls, bool stop_at_first)
 
   std::shared_ptr<Batch> b;
   auto value = [&](int i) {
-    return out[i] != -1 ? out[i] : (b ? b->st[i] : -1);
+    if (out[i] != -1)
+    {
+      return out[i];
+    }
+    if (b && b->st[i] != -1)
+    {
+      return b->st[i];
+    }
+    // Another caller may be asking about the same URL; its answer lands in the shared memory.
+    return cached_status(urls[i]);
   };
   auto decided = [&]() {
     for (int i = 0; i < n; ++i)
@@ -315,31 +363,64 @@ QVector<int> probe_batch(const QList<QUrl> &urls, bool stop_at_first)
   b = std::make_shared<Batch>();
   b->st = QVector<int>(n, -1);
   b->replies.resize(n);
-  Net::get().post([b, urls, todo] {
-    for (int i : todo)
-    {
-      start_probe(b, i, urls[i], false);
-    }
-  });
+  QList<int> mine; // URLs nobody else is already asking about
+  for (int i : todo)
   {
+    if (claim_probe(urls[i]))
+    {
+      mine << i;
+    }
+  }
+  if (!mine.isEmpty())
+  {
+    Net::get().post([b, urls, mine] {
+      for (int i : mine)
+      {
+        start_probe(b, i, urls[i], false);
+      }
+    });
+  }
+
+  const bool gui = on_gui_thread();
+  const bool backoff = gui && QDateTime::currentMSecsSinceEpoch() < g_gui_backoff_until.load();
+  const qint64 limit = backoff ? 0 : (gui ? kGuiWaitMs : 30000);
+  bool timed_out = false;
+  {
+    QElapsedTimer waited;
+    waited.start();
     QMutexLocker l(&b->m);
     while (!decided())
     {
-      if (!b->cv.wait(&b->m, 30000UL))
+      if (waited.elapsed() >= limit)
       {
+        timed_out = true;
         break;
       }
+      b->cv.wait(&b->m, 20UL);
     }
     for (int i = 0; i < n; ++i)
     {
       out[i] = value(i);
     }
   }
+  if (gui && timed_out)
+  {
+    // Leave the probes running: they fill the shared memory, so the next lookup is instant.
+    if (!backoff)
+    {
+      g_gui_backoff_until = QDateTime::currentMSecsSinceEpoch() + kGuiBackoffMs;
+    }
+    return out;
+  }
   b->cancel = true;
-  Net::get().post([b] {
+  Net::get().post([b, urls, mine] {
     for (const QPointer<QNetworkReply> &r : std::as_const(b->replies))
     {
       hang_up(r.data());
+    }
+    for (int i : mine)
+    {
+      release_probe(urls[i]);
     }
   });
   return out;
@@ -928,6 +1009,7 @@ QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::functi
   const QStringList srcs = sources();
   QHash<int, QUrl> got;
   bool transport_error = false;
+  bool pending = false; // some probe has not answered yet (GUI thread gave up waiting)
   auto discover = [&](bool variants) {
     QList<QUrl> cand;
     QList<QUrl> cand_base;
@@ -953,7 +1035,11 @@ QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::functi
     const QVector<int> st = probe_batch(cand, false);
     for (int i = 0; i < cand.size(); ++i)
     {
-      if (st[i] != 200 && st[i] != 404)
+      if (st[i] == -1)
+      {
+        pending = true;
+      }
+      else if (st[i] != 200 && st[i] != 404)
       {
         transport_error = true;
       }
@@ -964,7 +1050,7 @@ QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::functi
     }
   };
   discover(false);
-  if (got.size() < srcs.size())
+  if (got.size() < srcs.size() && !pending)
   {
     discover(true);
   }
@@ -975,6 +1061,10 @@ QList<QUrl> CdnCharacters::characterBases(const QString &name, const std::functi
     {
       found << got.value(si);
     }
+  }
+  if (pending)
+  {
+    return found; // incomplete answer: remember nothing, the next lookup finds the finished probes in memory
   }
   QMutexLocker lock(&m_mutex);
   if (found.isEmpty())
@@ -1019,6 +1109,7 @@ QString CdnCharacters::probe(const QList<QUrl> &dirs, const QString &rel, const 
 {
   // All candidates of a wave are asked at once; list order (suffix, then folder) is the
   // priority, exactly as before. Exact spelling is tried first, case variants only if nothing matched.
+  bool pending = false;
   auto wave = [&](bool variants) -> QString {
     QList<QUrl> cand;
     for (const QString &suffix : suffixes)
@@ -1043,11 +1134,16 @@ QString CdnCharacters::probe(const QList<QUrl> &dirs, const QString &rel, const 
       {
         return toVirtualPath(cand[i]);
       }
+      if (st[i] == -1)
+      {
+        pending = true; // a higher-priority candidate has not answered yet: do not settle for a lower one
+        return QString();
+      }
     }
     return QString();
   };
   const QString hit = wave(false);
-  return hit.isEmpty() ? wave(true) : hit;
+  return (hit.isEmpty() && !pending) ? wave(true) : hit;
 }
 
 QString CdnCharacters::resolve(const QString &vpath, const QStringList &suffixes, const std::function<bool(const QString &)> &is_local)
